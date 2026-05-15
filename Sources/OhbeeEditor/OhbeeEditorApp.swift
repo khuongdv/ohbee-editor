@@ -87,6 +87,24 @@ struct OhbeeEditorApp: App {
                 }
                 .keyboardShortcut("o", modifiers: .command)
                 .disabled(!store.canCreateScratchDocument)
+
+                Menu("Open Recent") {
+                    if store.recentFiles.isEmpty {
+                        Button("No Recent Files") {}
+                            .disabled(true)
+                    } else {
+                        ForEach(store.recentFiles, id: \.self) { url in
+                            Button(url.lastPathComponent) {
+                                store.openDocument(from: url)
+                            }
+                            .help(url.path)
+                        }
+                        Divider()
+                        Button("Clear Recent Files") {
+                            store.clearRecentFiles()
+                        }
+                    }
+                }
             }
 
             CommandGroup(after: .textEditing) {

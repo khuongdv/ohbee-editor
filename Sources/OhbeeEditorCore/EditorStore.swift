@@ -9,6 +9,8 @@ public enum StatusMessageTone {
 
 public final class EditorStore: ObservableObject {
     public static let maxDocumentCount = 50
+    private static let recentFilesKey = "ohbee.recentFiles"
+    private static let maxRecentFiles = 10
 
     @Published public private(set) var documents: [EditorDocument]
     @Published public var selectedDocumentID: EditorDocument.ID?
@@ -16,6 +18,7 @@ public final class EditorStore: ObservableObject {
     @Published public private(set) var statusMessageTone: StatusMessageTone = .neutral
     @Published public var searchOptions = SearchOptions()
     @Published public private(set) var currentMatchIndex: Int?
+    @Published public private(set) var recentFiles: [URL]
 
     private let sessionStore: SessionPersisting
     private let fileIO: EditorFileIO
@@ -28,6 +31,9 @@ public final class EditorStore: ObservableObject {
     ) {
         self.sessionStore = sessionStore
         self.fileIO = fileIO
+
+        let paths = UserDefaults.standard.stringArray(forKey: Self.recentFilesKey) ?? []
+        self.recentFiles = paths.compactMap { URL(fileURLWithPath: $0) }
 
         let restoredSession = Self.restoreSession(using: sessionStore)
         let requestedDocuments = documents ?? restoredSession?.documents
@@ -88,6 +94,11 @@ public final class EditorStore: ObservableObject {
         selectedDocumentID = document.id
         currentMatchIndex = nil
         setStatus("Created \(document.title).")
+        saveSession()
+    }
+
+    public func moveDocument(from source: IndexSet, to destination: Int) {
+        documents.move(fromOffsets: source, toOffset: destination)
         saveSession()
     }
 
@@ -227,9 +238,25 @@ public final class EditorStore: ObservableObject {
             currentMatchIndex = nil
             setStatus("Opened \(document.title).")
             saveSession()
+            addRecentFile(fileURL)
         } catch {
             setStatus("Could not open file: \(error.localizedDescription)", tone: .warning)
         }
+    }
+
+    public func clearRecentFiles() {
+        recentFiles = []
+        UserDefaults.standard.removeObject(forKey: Self.recentFilesKey)
+    }
+
+    private func addRecentFile(_ url: URL) {
+        var updated = recentFiles.filter { $0 != url }
+        updated.insert(url, at: 0)
+        if updated.count > Self.maxRecentFiles {
+            updated = Array(updated.prefix(Self.maxRecentFiles))
+        }
+        recentFiles = updated
+        UserDefaults.standard.set(updated.map(\.path), forKey: Self.recentFilesKey)
     }
 
     public func saveSelectedDocument() -> Bool {
@@ -479,14 +506,9 @@ public final class EditorStore: ObservableObject {
     }
 
     private func saveSession() {
-        let scratchDocuments = documents.filter(\.isScratch)
-        let selectedScratchID = scratchDocuments.contains { $0.id == selectedDocumentID }
-            ? selectedDocumentID
-            : scratchDocuments.first?.id
-
         let session = EditorSession(
-            selectedDocumentID: selectedScratchID,
-            documents: scratchDocuments
+            selectedDocumentID: selectedDocumentID,
+            documents: documents
         )
 
         do {
@@ -498,19 +520,12 @@ public final class EditorStore: ObservableObject {
 
     private static func restoreSession(using sessionStore: SessionPersisting) -> EditorSession? {
         do {
-            guard let session = try sessionStore.loadSession() else {
+            guard let session = try sessionStore.loadSession(),
+                  !session.documents.isEmpty else {
                 return nil
             }
 
-            let scratchDocuments = session.documents.filter(\.isScratch)
-            guard !scratchDocuments.isEmpty else {
-                return nil
-            }
-
-            return EditorSession(
-                selectedDocumentID: session.selectedDocumentID,
-                documents: scratchDocuments
-            )
+            return session
         } catch {
             return nil
         }

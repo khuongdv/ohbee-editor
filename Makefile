@@ -1,7 +1,7 @@
 BINARY   = OhbeeEditor
 APP      = Ohbee\ Editor.app
 BUNDLE   = $(APP)/Contents
-VERSION  = 1.0.1
+VERSION  = 1.0.2
 LSREGISTER = /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 
 .PHONY: build bundle run dev install clean

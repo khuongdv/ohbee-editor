@@ -4,6 +4,7 @@ import OhbeeEditorCore
 final class LineNumberRulerView: NSRulerView {
     private weak var textView: NSTextView?
     private var lineMap: LineMap?
+    private var cursorLine: Int = 1
 
     init(scrollView: NSScrollView, textView: NSTextView) {
         super.init(scrollView: scrollView, orientation: .verticalRuler)
@@ -19,6 +20,9 @@ final class LineNumberRulerView: NSRulerView {
         nc.addObserver(self, selector: #selector(scrolled),
                        name: NSView.frameDidChangeNotification,
                        object: textView)
+        nc.addObserver(self, selector: #selector(selectionChanged),
+                       name: NSTextView.didChangeSelectionNotification,
+                       object: textView)
         rebuildLineMap()
         ruleThickness = gutterWidth(for: lineMap?.lineCount ?? 1)
     }
@@ -28,6 +32,24 @@ final class LineNumberRulerView: NSRulerView {
     deinit { NotificationCenter.default.removeObserver(self) }
 
     override var isFlipped: Bool { true }
+
+    func syncCursorLine() {
+        guard let textView, let lineMap else { return }
+        let loc = textView.selectedRange().location
+        let length = (textView.string as NSString).length
+        if loc >= length {
+            // lineStarts already includes the virtual entry at `length` for each trailing
+            // newline, so lineCount is the correct 1-based line number for the extra fragment.
+            cursorLine = lineMap.lineCount
+        } else {
+            cursorLine = lineMap.lineAndColumn(for: loc).line + 1
+        }
+        needsDisplay = true
+    }
+
+    @objc private func selectionChanged() {
+        syncCursorLine()
+    }
 
     @objc private func textStorageEdited(_ notification: Notification) {
         guard let storage = notification.object as? NSTextStorage,
@@ -75,16 +97,21 @@ final class LineNumberRulerView: NSRulerView {
             .font: font,
             .foregroundColor: NSColor.quaternaryLabelColor
         ]
+        let activeAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .medium),
+            .foregroundColor: NSColor.controlAccentColor
+        ]
 
         let visibleRect = scrollView.documentVisibleRect
         let inset = textView.textContainerInset
 
         if layoutManager.numberOfGlyphs == 0 {
             let s = "1" as NSString
-            let sz = s.size(withAttributes: attrs)
+            let a = activeAttrs
+            let sz = s.size(withAttributes: a)
             let lh = font.boundingRectForFont.height
             let y = inset.height - visibleRect.minY + (lh - sz.height) / 2
-            s.draw(at: NSPoint(x: bounds.width - sz.width - 7, y: y), withAttributes: attrs)
+            s.draw(at: NSPoint(x: bounds.width - sz.width - 7, y: y), withAttributes: a)
             return
         }
 
@@ -112,8 +139,9 @@ final class LineNumberRulerView: NSRulerView {
 
             let y = lineRect.minY + inset.height - visibleRect.minY
             let s = "\(lineNum)" as NSString
-            let sz = s.size(withAttributes: attrs)
-            s.draw(at: NSPoint(x: bounds.width - sz.width - 7, y: y + (lineRect.height - sz.height) / 2), withAttributes: attrs)
+            let a = lineNum == cursorLine ? activeAttrs : attrs
+            let sz = s.size(withAttributes: a)
+            s.draw(at: NSPoint(x: bounds.width - sz.width - 7, y: y + (lineRect.height - sz.height) / 2), withAttributes: a)
             lineNum += 1
         }
 
@@ -124,8 +152,9 @@ final class LineNumberRulerView: NSRulerView {
             let y = extraRect.minY + inset.height - visibleRect.minY
             if y < bounds.height && y + extraRect.height > 0 {
                 let s = "\(lineNum)" as NSString
-                let sz = s.size(withAttributes: attrs)
-                s.draw(at: NSPoint(x: bounds.width - sz.width - 7, y: y + (extraRect.height - sz.height) / 2), withAttributes: attrs)
+                let a = lineNum == cursorLine ? activeAttrs : attrs
+                let sz = s.size(withAttributes: a)
+                s.draw(at: NSPoint(x: bounds.width - sz.width - 7, y: y + (extraRect.height - sz.height) / 2), withAttributes: a)
             }
         }
     }

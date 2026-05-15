@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import OhbeeEditorCore
 
 struct ContentView: View {
@@ -7,6 +8,8 @@ struct ContentView: View {
     @Binding var isSearchVisible: Bool
     @Environment(\.colorScheme) private var colorScheme
     @State private var showDocInfo = false
+    @State private var draggingDocumentID: EditorDocument.ID?
+    @FocusState private var searchFieldFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,6 +24,11 @@ struct ContentView: View {
         }
         .onAppear {
             activateAppWindow()
+        }
+        .onChange(of: isSearchVisible) { visible in
+            if visible {
+                searchFieldFocused = true
+            }
         }
         .background(
             TabKeyboardShortcutView {
@@ -39,8 +47,19 @@ struct ContentView: View {
                 TabItemView(
                     document: document,
                     isSelected: store.selectedDocumentID == document.id,
-                    action: { store.selectDocument(document.id) }
+                    tooltip: document.fileURL?.path ?? document.title,
+                    action: { store.selectDocument(document.id) },
+                    closeAction: { closeTabWithWarning(document.id) }
                 )
+                .onDrag {
+                    draggingDocumentID = document.id
+                    return NSItemProvider(object: document.id.uuidString as NSString)
+                }
+                .onDrop(of: [UTType.text], delegate: TabDropDelegate(
+                    documentID: document.id,
+                    store: store,
+                    draggingDocumentID: $draggingDocumentID
+                ))
                 .contextMenu {
                     Button("Close This Tab") {
                         closeTabWithWarning(document.id)
@@ -131,6 +150,7 @@ struct ContentView: View {
             ))
             .textFieldStyle(.roundedBorder)
             .frame(width: 180)
+            .focused($searchFieldFocused)
 
             Text(store.searchSummary.displayText)
                 .font(.caption)
@@ -607,33 +627,50 @@ private struct TabKeyboardShortcutView: NSViewRepresentable {
 private struct TabItemView: View {
     let document: EditorDocument
     let isSelected: Bool
+    let tooltip: String
     let action: () -> Void
+    let closeAction: () -> Void
 
     @State private var isHovering = false
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
+        HStack(spacing: 0) {
+            Button(action: action) {
                 Text(document.title)
                     .font(.subheadline)
                     .fontWeight(isSelected ? .medium : .regular)
                     .lineLimit(1)
+                    .truncationMode(.middle)
                     .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                    .padding(.leading, 9)
+                    .padding(.trailing, 3)
+                    .padding(.vertical, 5)
+            }
+            .buttonStyle(.plain)
 
-                if document.isDirty {
-                    Circle()
-                        .fill(isSelected ? Color.accentColor : Color.secondary.opacity(0.5))
-                        .frame(width: 5, height: 5)
+            Button(action: closeAction) {
+                ZStack {
+                    if document.isDirty {
+                        Circle()
+                            .fill(isSelected ? Color.accentColor : Color.secondary.opacity(0.5))
+                            .frame(width: 6, height: 6)
+                    } else {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                    }
                 }
+                .frame(width: 14, height: 14)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(tabBackground)
-            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 6)
         }
-        .buttonStyle(.plain)
+        .help(tooltip)
+        .background {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(tabBackground)
+        }
         .onHover { isHovering = $0 }
     }
 
@@ -716,6 +753,38 @@ private struct DocumentInfoView: View {
               let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
               let sizeNum = attrs[.size] as? NSNumber else { return nil }
         return ByteCountFormatter.string(fromByteCount: sizeNum.int64Value, countStyle: .file)
+    }
+}
+
+private struct TabDropDelegate: DropDelegate {
+    let documentID: EditorDocument.ID
+    let store: EditorStore
+    @Binding var draggingDocumentID: EditorDocument.ID?
+
+    func dropEntered(info: DropInfo) {
+        guard let fromID = draggingDocumentID, fromID != documentID,
+              let fromIdx = store.documents.firstIndex(where: { $0.id == fromID }),
+              let toIdx = store.documents.firstIndex(where: { $0.id == documentID })
+        else { return }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            store.moveDocument(
+                from: IndexSet(integer: fromIdx),
+                to: toIdx > fromIdx ? toIdx + 1 : toIdx
+            )
+        }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggingDocumentID = nil
+        return true
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func validateDrop(info: DropInfo) -> Bool {
+        draggingDocumentID != nil && draggingDocumentID != documentID
     }
 }
 

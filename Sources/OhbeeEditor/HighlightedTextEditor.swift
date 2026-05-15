@@ -55,11 +55,13 @@ struct HighlightedTextEditor: NSViewRepresentable {
         context.coordinator.applyHighlighting(to: textView)
         EditorTextOperationCenter.shared.register(textView: textView, documentID: documentID)
         textView.onFileDrop = onFileDrop
+        var rulerRef: LineNumberRulerView?
         if showLineNumbers {
             let ruler = LineNumberRulerView(scrollView: scrollView, textView: textView)
             scrollView.verticalRulerView = ruler
             scrollView.hasVerticalRuler = true
             scrollView.rulersVisible = true
+            rulerRef = ruler
         }
         let fileURLType = NSPasteboard.PasteboardType.fileURL
         if !textView.registeredDraggedTypes.contains(fileURLType) {
@@ -68,6 +70,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
 
         DispatchQueue.main.async {
             textView.window?.makeFirstResponder(textView)
+            rulerRef?.syncCursorLine()
         }
 
         return scrollView
