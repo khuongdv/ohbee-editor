@@ -49,6 +49,12 @@ public final class EditorStore: ObservableObject {
         if self.selectedDocument == nil {
             self.selectedDocumentID = initialDocuments[0].id
         }
+
+        // Restore text for file-backed documents whose text was not persisted in the session.
+        // Deferred so init completes before async work begins.
+        DispatchQueue.main.async { [weak self] in
+            self?.reloadFileBackedDocumentsIfNeeded()
+        }
     }
 
     public var selectedDocument: EditorDocument? {
@@ -225,28 +231,110 @@ public final class EditorStore: ObservableObject {
         saveSession()
     }
 
+    /// Opens a file asynchronously. A placeholder tab appears immediately while the
+    /// file is read on a background thread, then the text is delivered on the main thread.
     public func openDocument(from fileURL: URL) {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            removeRecentFile(fileURL)
+            setStatus("File no longer exists and has been removed from recents: \(fileURL.lastPathComponent)", tone: .warning)
+            return
+        }
+
+        if let existing = documents.first(where: { $0.fileURL == fileURL }) {
+            selectedDocumentID = existing.id
+            currentMatchIndex = nil
+            setStatus("Switched to \(existing.title).")
+            return
+        }
+
         guard canCreateScratchDocument else {
             setStatus("Maximum \(Self.maxDocumentCount) tabs reached.", tone: .warning)
             return
         }
 
-        do {
-            let document = try fileIO.openDocument(from: fileURL)
-            documents.append(document)
-            selectedDocumentID = document.id
-            currentMatchIndex = nil
-            setStatus("Opened \(document.title).")
-            saveSession()
-            addRecentFile(fileURL)
-        } catch {
-            setStatus("Could not open file: \(error.localizedDescription)", tone: .warning)
+        let fileSize = EditorFileIO.byteCount(of: fileURL) ?? 0
+        let category = LargeFilePolicy.classify(byteCount: fileSize)
+
+        if category == .tooLarge {
+            setStatus(
+                "\(fileURL.lastPathComponent) exceeds \(LargeFilePolicy.maximumByteLimit / 1_048_576) MB. " +
+                "Ohbee Editor is not designed for files this large.",
+                tone: .warning
+            )
+            return
+        }
+
+        let isLargeFile = category != .normal
+        let now = Date()
+        let placeholder = EditorDocument(
+            id: UUID(),
+            title: fileURL.lastPathComponent,
+            text: "",
+            fileURL: fileURL,
+            isScratch: false,
+            isDirty: false,
+            createdAt: now,
+            updatedAt: now,
+            isLargeFile: isLargeFile
+        )
+
+        documents.append(placeholder)
+        selectedDocumentID = placeholder.id
+        currentMatchIndex = nil
+
+        if isLargeFile {
+            setStatus(
+                "Opening large file: \(fileURL.lastPathComponent). " +
+                "Syntax highlighting and line numbers will be disabled.",
+                tone: .warning
+            )
+        } else {
+            setStatus("Opening \(fileURL.lastPathComponent)...")
+        }
+
+        let docID = placeholder.id
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                let text = try EditorFileIO().readText(from: fileURL)
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    guard let idx = self.documents.firstIndex(where: { $0.id == docID }) else { return }
+                    self.documents[idx].text = text
+                    self.documents[idx].updatedAt = Date()
+                    if isLargeFile {
+                        self.setStatus(
+                            "Opened \(fileURL.lastPathComponent). " +
+                            "Large-file mode: syntax highlighting and line numbers are disabled.",
+                            tone: .warning
+                        )
+                    } else {
+                        self.setStatus("Opened \(fileURL.lastPathComponent).")
+                    }
+                    self.saveSession()
+                    self.addRecentFile(fileURL)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.documents.removeAll { $0.id == docID }
+                    if self.selectedDocumentID == docID {
+                        self.selectedDocumentID = self.documents.last?.id
+                    }
+                    self.setStatus("Could not open file: \(error.localizedDescription)", tone: .warning)
+                }
+            }
         }
     }
 
     public func clearRecentFiles() {
         recentFiles = []
         UserDefaults.standard.removeObject(forKey: Self.recentFilesKey)
+    }
+
+    private func removeRecentFile(_ url: URL) {
+        let updated = recentFiles.filter { $0 != url }
+        recentFiles = updated
+        UserDefaults.standard.set(updated.map(\.path), forKey: Self.recentFilesKey)
     }
 
     private func addRecentFile(_ url: URL) {
@@ -341,7 +429,10 @@ public final class EditorStore: ObservableObject {
     }
 
     public var searchSummary: SearchSummary {
-        SearchReplaceEngine.summary(
+        guard !(selectedDocument?.isLargeFile == true) else {
+            return SearchSummary(matchCount: 0, currentMatchIndex: nil)
+        }
+        return SearchReplaceEngine.summary(
             in: selectedDocument?.text ?? "",
             options: searchOptions,
             currentMatchIndex: currentMatchIndex
@@ -350,6 +441,13 @@ public final class EditorStore: ObservableObject {
 
     public func updateSearchQuery(_ query: String) {
         searchOptions.query = query
+        guard !(selectedDocument?.isLargeFile == true) else {
+            currentMatchIndex = nil
+            if !query.isEmpty {
+                setStatus("Search is not available for large files.", tone: .warning)
+            }
+            return
+        }
         currentMatchIndex = SearchReplaceEngine.nextMatchIndex(
             in: selectedDocument?.text ?? "",
             options: searchOptions,
@@ -363,6 +461,10 @@ public final class EditorStore: ObservableObject {
 
     public func setRegexSearchEnabled(_ enabled: Bool) {
         searchOptions.usesRegex = enabled
+        guard !(selectedDocument?.isLargeFile == true) else {
+            currentMatchIndex = nil
+            return
+        }
         currentMatchIndex = SearchReplaceEngine.nextMatchIndex(
             in: selectedDocument?.text ?? "",
             options: searchOptions,
@@ -372,6 +474,10 @@ public final class EditorStore: ObservableObject {
 
     public func setCaseSensitiveSearchEnabled(_ enabled: Bool) {
         searchOptions.isCaseSensitive = enabled
+        guard !(selectedDocument?.isLargeFile == true) else {
+            currentMatchIndex = nil
+            return
+        }
         currentMatchIndex = SearchReplaceEngine.nextMatchIndex(
             in: selectedDocument?.text ?? "",
             options: searchOptions,
@@ -380,6 +486,7 @@ public final class EditorStore: ObservableObject {
     }
 
     public func selectNextMatch() {
+        guard !(selectedDocument?.isLargeFile == true) else { return }
         currentMatchIndex = SearchReplaceEngine.nextMatchIndex(
             in: selectedDocument?.text ?? "",
             options: searchOptions,
@@ -388,6 +495,7 @@ public final class EditorStore: ObservableObject {
     }
 
     public func selectPreviousMatch() {
+        guard !(selectedDocument?.isLargeFile == true) else { return }
         currentMatchIndex = SearchReplaceEngine.previousMatchIndex(
             in: selectedDocument?.text ?? "",
             options: searchOptions,
@@ -396,6 +504,10 @@ public final class EditorStore: ObservableObject {
     }
 
     public func replaceCurrentMatch() {
+        guard !(selectedDocument?.isLargeFile == true) else {
+            setStatus("Replace is not available for large files.", tone: .warning)
+            return
+        }
         guard let index = selectedDocumentIndex else {
             return
         }
@@ -413,6 +525,10 @@ public final class EditorStore: ObservableObject {
     }
 
     public func replaceAllMatches() {
+        guard !(selectedDocument?.isLargeFile == true) else {
+            setStatus("Replace is not available for large files.", tone: .warning)
+            return
+        }
         guard let index = selectedDocumentIndex else {
             return
         }
@@ -471,6 +587,10 @@ public final class EditorStore: ObservableObject {
     }
 
     private func refreshCurrentMatch() {
+        guard !(selectedDocument?.isLargeFile == true) else {
+            currentMatchIndex = nil
+            return
+        }
         currentMatchIndex = SearchReplaceEngine.summary(
             in: selectedDocument?.text ?? "",
             options: searchOptions,
@@ -506,9 +626,10 @@ public final class EditorStore: ObservableObject {
     }
 
     private func saveSession() {
+        let docsToSave = documents.map { sessionDocumentRecord(from: $0) }
         let session = EditorSession(
             selectedDocumentID: selectedDocumentID,
-            documents: documents
+            documents: docsToSave
         )
 
         do {
@@ -516,6 +637,19 @@ public final class EditorStore: ObservableObject {
         } catch {
             setStatus("Could not save session: \(error.localizedDescription)", tone: .warning)
         }
+    }
+
+    /// Returns a copy of the document with text stripped where it is safe to omit from the session.
+    /// Clean file-backed documents store no text; the file on disk is the source of truth.
+    /// Scratch and dirty file-backed documents store text up to LargeFilePolicy.sessionTextCap.
+    private func sessionDocumentRecord(from document: EditorDocument) -> EditorDocument {
+        var record = document
+        record.text = LargeFilePolicy.sessionText(for: document)
+        if record.text.isEmpty && document.isDirty && document.fileURL != nil {
+            // Dirty text was too large to persist; restore will load the last saved file.
+            record.isDirty = false
+        }
+        return record
     }
 
     private static func restoreSession(using sessionStore: SessionPersisting) -> EditorSession? {
@@ -528,6 +662,29 @@ public final class EditorStore: ObservableObject {
             return session
         } catch {
             return nil
+        }
+    }
+
+    /// After session restore, file-backed documents whose text was not persisted
+    /// have text == "". Reload them from disk asynchronously.
+    private func reloadFileBackedDocumentsIfNeeded() {
+        for doc in documents {
+            guard let fileURL = doc.fileURL, !doc.isDirty, doc.text.isEmpty else { continue }
+            guard FileManager.default.fileExists(atPath: fileURL.path) else { continue }
+
+            let docID = doc.id
+            let fileSize = EditorFileIO.byteCount(of: fileURL) ?? 0
+            let isLargeFile = LargeFilePolicy.classify(byteCount: fileSize) != .normal
+
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                guard let text = try? EditorFileIO().readText(from: fileURL) else { return }
+                DispatchQueue.main.async {
+                    guard let self,
+                          let idx = self.documents.firstIndex(where: { $0.id == docID }) else { return }
+                    self.documents[idx].text = text
+                    self.documents[idx].isLargeFile = isLargeFile
+                }
+            }
         }
     }
 }

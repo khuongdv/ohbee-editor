@@ -506,6 +506,7 @@ private struct ScratchEditorView: View {
                 language: document.effectiveLanguage,
                 documentID: document.id,
                 showLineNumbers: showLineNumbers,
+                isLargeFile: document.isLargeFile,
                 onFileDrop: onFileDrop
             )
                 .background(Color(nsColor: .textBackgroundColor))

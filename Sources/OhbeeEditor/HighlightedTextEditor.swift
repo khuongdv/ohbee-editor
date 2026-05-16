@@ -7,7 +7,11 @@ struct HighlightedTextEditor: NSViewRepresentable {
     let language: EditorLanguage
     let documentID: EditorDocument.ID
     var showLineNumbers: Bool = true
+    var isLargeFile: Bool = false
     var onFileDrop: (([URL]) -> Void)? = nil
+
+    /// Line numbers are disabled for large files to prevent per-keystroke full scans.
+    private var effectiveShowLineNumbers: Bool { showLineNumbers && !isLargeFile }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -52,11 +56,12 @@ struct HighlightedTextEditor: NSViewRepresentable {
         scrollView.documentView = textView
         context.coordinator.documentID = documentID
         context.coordinator.language = language
+        context.coordinator.isLargeFile = isLargeFile
         context.coordinator.applyHighlighting(to: textView)
         EditorTextOperationCenter.shared.register(textView: textView, documentID: documentID)
         textView.onFileDrop = onFileDrop
         var rulerRef: LineNumberRulerView?
-        if showLineNumbers {
+        if effectiveShowLineNumbers {
             let ruler = LineNumberRulerView(scrollView: scrollView, textView: textView)
             scrollView.verticalRulerView = ruler
             scrollView.hasVerticalRuler = true
@@ -87,9 +92,10 @@ struct HighlightedTextEditor: NSViewRepresentable {
         let languageChanged = context.coordinator.language != language
         context.coordinator.documentID = documentID
         context.coordinator.language = language
+        context.coordinator.isLargeFile = isLargeFile
         EditorTextOperationCenter.shared.register(textView: textView, documentID: documentID)
 
-        if showLineNumbers {
+        if effectiveShowLineNumbers {
             if !(scrollView.verticalRulerView is LineNumberRulerView) {
                 let ruler = LineNumberRulerView(scrollView: scrollView, textView: textView)
                 scrollView.verticalRulerView = ruler
@@ -136,6 +142,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
         var language: EditorLanguage = .plainText
         var documentID: EditorDocument.ID?
         var isApplyingExternalText = false
+        var isLargeFile: Bool = false
 
         private let highlighter = SimpleSyntaxHighlighter()
         private var pendingHighlight: DispatchWorkItem?
@@ -156,10 +163,16 @@ struct HighlightedTextEditor: NSViewRepresentable {
         func applyHighlighting(to textView: NSTextView) {
             pendingHighlight?.cancel()
             pendingHighlight = nil
+            guard !isLargeFile else {
+                let font = textView.font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+                textView.typingAttributes = [.font: font, .foregroundColor: NSColor.textColor]
+                return
+            }
             highlighter.apply(language: language, to: textView)
         }
 
         func scheduleHighlighting(to textView: NSTextView) {
+            guard !isLargeFile else { return }
             guard language != .plainText else {
                 return
             }

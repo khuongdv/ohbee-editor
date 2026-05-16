@@ -11,6 +11,14 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
     public var updatedAt: Date
     public var language: EditorLanguage?
 
+    /// Set to true when the file on disk exceeds LargeFilePolicy.normalByteLimit.
+    /// Not persisted in the session. Defaults to false on decode.
+    public var isLargeFile: Bool = false
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, text, fileURL, isScratch, isDirty, createdAt, updatedAt, language
+    }
+
     public init(
         id: UUID,
         title: String,
@@ -20,7 +28,8 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
         isDirty: Bool,
         createdAt: Date,
         updatedAt: Date,
-        language: EditorLanguage? = nil
+        language: EditorLanguage? = nil,
+        isLargeFile: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -31,6 +40,7 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.language = language
+        self.isLargeFile = isLargeFile
     }
 
     public var effectiveLanguage: EditorLanguage {
@@ -50,5 +60,18 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
             createdAt: now,
             updatedAt: now
         )
+    }
+
+    // isLargeFile is intentionally excluded: it is a runtime classification, not document identity.
+    public static func == (lhs: EditorDocument, rhs: EditorDocument) -> Bool {
+        lhs.id == rhs.id &&
+        lhs.title == rhs.title &&
+        lhs.text == rhs.text &&
+        lhs.fileURL == rhs.fileURL &&
+        lhs.isScratch == rhs.isScratch &&
+        lhs.isDirty == rhs.isDirty &&
+        lhs.createdAt == rhs.createdAt &&
+        lhs.updatedAt == rhs.updatedAt &&
+        lhs.language == rhs.language
     }
 }

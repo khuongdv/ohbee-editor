@@ -6,6 +6,11 @@ final class LineNumberRulerView: NSRulerView {
     private var lineMap: LineMap?
     private var cursorLine: Int = 1
 
+    // Safety net: skip full-document scans above this character count.
+    // isLargeFile already hides the ruler for large files, but this guard
+    // protects against edge cases such as a scratch document growing very large.
+    private static let rebuildCharacterThreshold = 5_000_000
+
     init(scrollView: NSScrollView, textView: NSTextView) {
         super.init(scrollView: scrollView, orientation: .verticalRuler)
         self.textView = textView
@@ -54,8 +59,11 @@ final class LineNumberRulerView: NSRulerView {
     @objc private func textStorageEdited(_ notification: Notification) {
         guard let storage = notification.object as? NSTextStorage,
               storage.editedMask.contains(.editedCharacters) else { return }
-        rebuildLineMap()
-        updateRuleThicknessIfNeeded()
+        let charCount = textView.map { ($0.string as NSString).length } ?? 0
+        if charCount <= Self.rebuildCharacterThreshold {
+            rebuildLineMap()
+            updateRuleThicknessIfNeeded()
+        }
         needsDisplay = true
     }
 

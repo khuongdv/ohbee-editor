@@ -598,7 +598,139 @@ func testCopyColumnRangesWithEmptyLine() throws {
     try expect(copied == "bc\n\nhi", "Empty line in rectangle should produce empty segment in copy.")
 }
 
+// MARK: - Large file policy tests
+
+func testFileSizePolicyClassification() throws {
+    try expect(LargeFilePolicy.classify(byteCount: 0) == .normal, "0 bytes should be normal.")
+    try expect(LargeFilePolicy.classify(byteCount: LargeFilePolicy.normalByteLimit) == .normal, "Exactly at normalByteLimit should be normal.")
+    try expect(LargeFilePolicy.classify(byteCount: LargeFilePolicy.normalByteLimit + 1) == .large, "1 byte over normalByteLimit should be large.")
+    try expect(LargeFilePolicy.classify(byteCount: LargeFilePolicy.warningByteLimit) == .large, "Exactly at warningByteLimit should be large.")
+    try expect(LargeFilePolicy.classify(byteCount: LargeFilePolicy.warningByteLimit + 1) == .veryLarge, "1 byte over warningByteLimit should be veryLarge.")
+    try expect(LargeFilePolicy.classify(byteCount: LargeFilePolicy.maximumByteLimit) == .veryLarge, "Exactly at maximumByteLimit should be veryLarge.")
+    try expect(LargeFilePolicy.classify(byteCount: LargeFilePolicy.maximumByteLimit + 1) == .tooLarge, "1 byte over maximumByteLimit should be tooLarge.")
+}
+
+func testSessionTextForCleanFileBacked() throws {
+    let doc = EditorDocument(
+        id: UUID(), title: "file.txt", text: "hello world",
+        fileURL: URL(fileURLWithPath: "/tmp/file.txt"),
+        isScratch: false, isDirty: false,
+        createdAt: Date(), updatedAt: Date()
+    )
+    try expect(LargeFilePolicy.sessionText(for: doc) == "", "Clean file-backed document should not persist text in session.")
+}
+
+func testSessionTextForDirtyFileBackedWithinCap() throws {
+    let doc = EditorDocument(
+        id: UUID(), title: "file.txt", text: "unsaved change",
+        fileURL: URL(fileURLWithPath: "/tmp/file.txt"),
+        isScratch: false, isDirty: true,
+        createdAt: Date(), updatedAt: Date()
+    )
+    try expect(LargeFilePolicy.sessionText(for: doc) == "unsaved change", "Dirty file-backed doc within cap should persist text.")
+}
+
+func testSessionTextForDirtyFileBackedOverCap() throws {
+    let bigText = String(repeating: "x", count: LargeFilePolicy.sessionTextCap + 1)
+    let doc = EditorDocument(
+        id: UUID(), title: "file.txt", text: bigText,
+        fileURL: URL(fileURLWithPath: "/tmp/file.txt"),
+        isScratch: false, isDirty: true,
+        createdAt: Date(), updatedAt: Date()
+    )
+    try expect(LargeFilePolicy.sessionText(for: doc) == "", "Dirty file-backed doc over cap should not persist text.")
+}
+
+func testSessionTextForScratchWithinCap() throws {
+    let doc = EditorDocument.scratch(index: 1)
+    var mutable = doc
+    mutable.text = "my notes"
+    try expect(LargeFilePolicy.sessionText(for: mutable) == "my notes", "Scratch doc within cap should persist text.")
+}
+
+func testSessionTextForScratchOverCap() throws {
+    let bigText = String(repeating: "x", count: LargeFilePolicy.sessionTextCap + 1)
+    var doc = EditorDocument.scratch(index: 1)
+    doc.text = bigText
+    try expect(LargeFilePolicy.sessionText(for: doc) == "", "Scratch doc over cap should not persist text.")
+}
+
+func testShouldPreserveDirtyStateFileBacked() throws {
+    let smallDirtyDoc = EditorDocument(
+        id: UUID(), title: "file.txt", text: "small change",
+        fileURL: URL(fileURLWithPath: "/tmp/file.txt"),
+        isScratch: false, isDirty: true,
+        createdAt: Date(), updatedAt: Date()
+    )
+    try expect(LargeFilePolicy.shouldPreserveDirtyState(for: smallDirtyDoc), "Small dirty file-backed doc should preserve dirty state.")
+
+    let bigText = String(repeating: "x", count: LargeFilePolicy.sessionTextCap + 1)
+    let largeDirtyDoc = EditorDocument(
+        id: UUID(), title: "file.txt", text: bigText,
+        fileURL: URL(fileURLWithPath: "/tmp/file.txt"),
+        isScratch: false, isDirty: true,
+        createdAt: Date(), updatedAt: Date()
+    )
+    try expect(!LargeFilePolicy.shouldPreserveDirtyState(for: largeDirtyDoc), "Large dirty file-backed doc cannot preserve dirty state.")
+}
+
+func testFileSizeSessionRoundTrip() throws {
+    let fileURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathComponent("session.json")
+    let store = LocalSessionStore(fileURL: fileURL)
+
+    let fileBackedDoc = EditorDocument(
+        id: UUID(), title: "sample.txt", text: "content from disk",
+        fileURL: URL(fileURLWithPath: "/tmp/sample.txt"),
+        isScratch: false, isDirty: false,
+        createdAt: Date(), updatedAt: Date()
+    )
+    let scratchDoc = EditorDocument.scratch(index: 1)
+    var mutableScratch = scratchDoc
+    mutableScratch.text = "scratch notes"
+
+    // Simulate what EditorStore.saveSession does: strip text for clean file-backed docs.
+    var fileRecord = fileBackedDoc
+    fileRecord.text = LargeFilePolicy.sessionText(for: fileBackedDoc)
+
+    let session = EditorSession(
+        selectedDocumentID: fileBackedDoc.id,
+        documents: [fileRecord, mutableScratch]
+    )
+    try store.saveSession(session)
+    let loaded = try store.loadSession()
+
+    try expect(loaded?.documents.first?.text == "", "Saved session should not contain text for clean file-backed document.")
+    try expect(loaded?.documents.last?.text == "scratch notes", "Saved session should preserve scratch document text.")
+}
+
+func testIsLargeFileNotPersistedInSession() throws {
+    let fileURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathComponent("session.json")
+    let store = LocalSessionStore(fileURL: fileURL)
+
+    var doc = EditorDocument.scratch(index: 1)
+    doc.isLargeFile = true
+
+    let session = EditorSession(selectedDocumentID: doc.id, documents: [doc])
+    try store.saveSession(session)
+    let loaded = try store.loadSession()
+
+    try expect(loaded?.documents.first?.isLargeFile == false, "isLargeFile should not be persisted; it must default to false on decode.")
+}
+
 let tests: [(String, () throws -> Void)] = [
+    ("file size policy classification", testFileSizePolicyClassification),
+    ("session text: clean file-backed omits text", testSessionTextForCleanFileBacked),
+    ("session text: dirty file-backed within cap persists", testSessionTextForDirtyFileBackedWithinCap),
+    ("session text: dirty file-backed over cap omits text", testSessionTextForDirtyFileBackedOverCap),
+    ("session text: scratch within cap persists", testSessionTextForScratchWithinCap),
+    ("session text: scratch over cap omits text", testSessionTextForScratchOverCap),
+    ("session dirty state preservation", testShouldPreserveDirtyStateFileBacked),
+    ("session round-trip strips file-backed text", testFileSizeSessionRoundTrip),
+    ("isLargeFile not persisted in session", testIsLargeFileNotPersistedInSession),
     ("save and load session", testSaveAndLoadSession),
     ("missing session returns nil", testMissingSessionReturnsNil),
     ("trim trailing whitespace", testTrimTrailingWhitespace),
