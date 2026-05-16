@@ -8,6 +8,9 @@ struct ContentView: View {
     @Binding var isSearchVisible: Bool
     @Environment(\.colorScheme) private var colorScheme
     @State private var showDocInfo = false
+    @State private var showWordFrequency = false
+    @State private var wordFrequencySnapshot: [WordFrequencyEntry] = []
+    @State private var showCompare = false
     @State private var draggingDocumentID: EditorDocument.ID?
     @FocusState private var searchFieldFocused: Bool
 
@@ -301,6 +304,14 @@ struct ContentView: View {
             .font(.caption)
             .disabled(!store.selectedDocumentSupportsJSONTools)
 
+            Menu("XML") {
+                transformButton("Format XML", XMLTools.format)
+                transformButton("Minify XML", XMLTools.minify)
+            }
+            .controlSize(.small)
+            .font(.caption)
+            .disabled(!store.selectedDocumentSupportsXMLTools)
+
             Menu("URL") {
                 transformButton("URL Encode", URLTools.encode)
                 transformButton("URL Decode", URLTools.decode)
@@ -353,6 +364,42 @@ struct ContentView: View {
             }
 
             Spacer()
+
+            Button {
+                wordFrequencySnapshot = WordFrequencyTools.topWords(in: store.selectedDocument?.text ?? "")
+                showWordFrequency.toggle()
+            } label: {
+                Image(systemName: "chart.bar.xaxis")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Word Frequency")
+            }
+            .buttonStyle(.borderless)
+            .help("Word Frequency")
+            .popover(isPresented: $showWordFrequency, arrowEdge: .top) {
+                WordFrequencyView(entries: wordFrequencySnapshot)
+            }
+
+            Button {
+                showCompare = true
+            } label: {
+                Image(systemName: "arrow.left.arrow.right")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Compare Tabs")
+            }
+            .buttonStyle(.borderless)
+            .help("Compare Tabs")
+            .disabled(store.documents.count < 2)
+            .sheet(isPresented: $showCompare) {
+                CompareTabsSheet(
+                    documents: store.documents,
+                    isPresented: $showCompare,
+                    onCompare: { baseID, changedID in
+                        store.openDiffTab(baseID: baseID, changedID: changedID)
+                    }
+                )
+            }
 
             Button {
                 showDocInfo.toggle()

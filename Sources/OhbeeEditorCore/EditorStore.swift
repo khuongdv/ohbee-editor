@@ -82,6 +82,15 @@ public final class EditorStore: ObservableObject {
             || EditorLanguage.inferred(from: selectedDocument.fileURL) == .json
     }
 
+    public var selectedDocumentSupportsXMLTools: Bool {
+        guard let selectedDocument else {
+            return false
+        }
+
+        return selectedDocument.language == .xml
+            || EditorLanguage.inferred(from: selectedDocument.fileURL) == .xml
+    }
+
     public var windowTitle: String {
         let documentTitle = selectedDocument.map(displayTitleForWindow) ?? "Untitled"
         return "Ohbee Editor - \(documentTitle)"
@@ -101,6 +110,50 @@ public final class EditorStore: ObservableObject {
         currentMatchIndex = nil
         setStatus("Created \(document.title).")
         saveSession()
+    }
+
+    public func openDiffTab(baseID: EditorDocument.ID, changedID: EditorDocument.ID) {
+        guard let base = documents.first(where: { $0.id == baseID }),
+              let changed = documents.first(where: { $0.id == changedID }) else {
+            setStatus("Could not find documents to compare.", tone: .warning)
+            return
+        }
+
+        guard !base.isLargeFile && !changed.isLargeFile else {
+            setStatus("Cannot diff large files.", tone: .warning)
+            return
+        }
+
+        let baseLineCount = base.text.components(separatedBy: "\n").count
+        let changedLineCount = changed.text.components(separatedBy: "\n").count
+        guard baseLineCount * changedLineCount <= DiffTools.maxDiffCells else {
+            setStatus(
+                "Documents too large to diff (\(baseLineCount) × \(changedLineCount) lines).",
+                tone: .warning
+            )
+            return
+        }
+
+        guard canCreateScratchDocument else {
+            setStatus("Maximum \(Self.maxDocumentCount) tabs reached.", tone: .warning)
+            return
+        }
+
+        let diffText = DiffTools.annotatedText(
+            baseTitle: base.title,
+            changedTitle: changed.title,
+            base: base.text,
+            changed: changed.text
+        )
+
+        let nextIndex = documents.filter(\.isScratch).count + 1
+        var doc = EditorDocument.scratch(index: nextIndex)
+        doc.title = "Diff: \(base.title) → \(changed.title)"
+        doc.text = diffText
+        documents.append(doc)
+        selectedDocumentID = doc.id
+        saveSession()
+        setStatus("Diff opened in new tab.")
     }
 
     public func moveDocument(from source: IndexSet, to destination: Int) {

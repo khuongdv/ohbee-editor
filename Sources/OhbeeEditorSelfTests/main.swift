@@ -705,6 +705,120 @@ func testFileSizeSessionRoundTrip() throws {
     try expect(loaded?.documents.last?.text == "scratch notes", "Saved session should preserve scratch document text.")
 }
 
+// MARK: - XML tools tests
+
+func testXMLFormat() throws {
+    let xml = "<root><child>text</child></root>"
+    guard case let .success(formatted, summary) = XMLTools.format(xml) else {
+        throw SelfTestError.failed("Valid XML should format successfully.")
+    }
+    try expect(summary == "Formatted XML.", "XML format summary should be 'Formatted XML.'")
+    try expect(formatted.contains("<child>text</child>"), "Formatted XML should contain child element.")
+}
+
+func testXMLMinify() throws {
+    let xml = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <root>
+        <child>text</child>
+    </root>
+    """
+    guard case let .success(minified, summary) = XMLTools.minify(xml) else {
+        throw SelfTestError.failed("Valid XML should minify successfully.")
+    }
+    try expect(summary == "Minified XML.", "XML minify summary should be 'Minified XML.'")
+    try expect(!minified.contains("\n    "), "Minified XML should not contain indentation whitespace.")
+}
+
+func testXMLInvalidReportsError() throws {
+    guard case let .failure(message) = XMLTools.format("<unclosed>") else {
+        throw SelfTestError.failed("Invalid XML should fail.")
+    }
+    try expect(message.hasPrefix("Invalid XML:"), "Invalid XML error should start with 'Invalid XML:'.")
+}
+
+func testXMLEmptyInput() throws {
+    guard case .failure = XMLTools.format("   ") else {
+        throw SelfTestError.failed("Empty XML input should fail.")
+    }
+}
+
+// MARK: - Word frequency tests
+
+func testWordFrequencyTopWords() throws {
+    let text = "apple banana apple cherry apple banana"
+    let entries = WordFrequencyTools.topWords(in: text, limit: 3)
+    try expect(entries.count == 3, "Should return top 3 words.")
+    try expect(entries[0].word == "apple" && entries[0].count == 3, "Most frequent word should be 'apple' with count 3.")
+    try expect(entries[1].word == "banana" && entries[1].count == 2, "Second word should be 'banana' with count 2.")
+}
+
+func testWordFrequencyEmptyInput() throws {
+    let entries = WordFrequencyTools.topWords(in: "")
+    try expect(entries.isEmpty, "Empty input should produce no entries.")
+}
+
+func testWordFrequencyIgnoresShortTokens() throws {
+    let text = "a b c go to the store"
+    let entries = WordFrequencyTools.topWords(in: text)
+    let words = entries.map(\.word)
+    try expect(!words.contains("a"), "Single-char tokens should be ignored.")
+    try expect(!words.contains("b"), "Single-char tokens should be ignored.")
+    try expect(words.contains("go"), "2-char word 'go' should appear.")
+    try expect(words.contains("to"), "2-char word 'to' should appear.")
+    try expect(words.contains("the"), "3-char word 'the' should appear.")
+    try expect(words.contains("store"), "5-char word 'store' should appear.")
+}
+
+// MARK: - Diff tools tests
+
+func testDiffCommonLines() throws {
+    let base = ["line1", "line2", "line3"]
+    let changed = ["line1", "line2", "line3"]
+    let lines = DiffTools.diff(base: base, changed: changed)
+    try expect(lines.allSatisfy { $0.kind == .common }, "Identical inputs should produce all common lines.")
+    try expect(lines.count == 3, "Should have 3 common lines.")
+}
+
+func testDiffAddedLines() throws {
+    let base = ["line1", "line3"]
+    let changed = ["line1", "line2", "line3"]
+    let lines = DiffTools.diff(base: base, changed: changed)
+    let added = lines.filter { $0.kind == .added }
+    try expect(added.count == 1, "Should detect 1 added line.")
+    try expect(added[0].text == "line2", "Added line should be 'line2'.")
+}
+
+func testDiffRemovedLines() throws {
+    let base = ["line1", "line2", "line3"]
+    let changed = ["line1", "line3"]
+    let lines = DiffTools.diff(base: base, changed: changed)
+    let removed = lines.filter { $0.kind == .removed }
+    try expect(removed.count == 1, "Should detect 1 removed line.")
+    try expect(removed[0].text == "line2", "Removed line should be 'line2'.")
+}
+
+func testDiffAnnotatedText() throws {
+    let base = "hello\nworld"
+    let changed = "hello\nSwift"
+    let annotated = DiffTools.annotatedText(baseTitle: "A", changedTitle: "B", base: base, changed: changed)
+    try expect(annotated.contains("--- A"), "Annotated text should have base header.")
+    try expect(annotated.contains("+++ B"), "Annotated text should have changed header.")
+    try expect(annotated.contains("- world"), "Annotated text should mark removed line.")
+    try expect(annotated.contains("+ Swift"), "Annotated text should mark added line.")
+    try expect(annotated.contains("  hello"), "Annotated text should mark common line.")
+}
+
+func testDiffEmptyBase() throws {
+    let lines = DiffTools.diff(base: [], changed: ["new"])
+    try expect(lines.count == 1 && lines[0].kind == .added, "All lines should be added when base is empty.")
+}
+
+func testDiffEmptyChanged() throws {
+    let lines = DiffTools.diff(base: ["old"], changed: [])
+    try expect(lines.count == 1 && lines[0].kind == .removed, "All lines should be removed when changed is empty.")
+}
+
 func testIsLargeFileNotPersistedInSession() throws {
     let fileURL = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString)
@@ -766,7 +880,20 @@ let tests: [(String, () throws -> Void)] = [
     ("column selection: empty line in rectangle", testColumnSelectionEmptyLine),
     ("column selection: single line", testColumnSelectionSingleLine),
     ("column selection: copy rectangle", testCopyColumnRanges),
-    ("column selection: copy rectangle with empty line", testCopyColumnRangesWithEmptyLine)
+    ("column selection: copy rectangle with empty line", testCopyColumnRangesWithEmptyLine),
+    ("XML format valid", testXMLFormat),
+    ("XML minify valid", testXMLMinify),
+    ("XML invalid reports error", testXMLInvalidReportsError),
+    ("XML empty input fails", testXMLEmptyInput),
+    ("word frequency top words", testWordFrequencyTopWords),
+    ("word frequency empty input", testWordFrequencyEmptyInput),
+    ("word frequency ignores short tokens", testWordFrequencyIgnoresShortTokens),
+    ("diff common lines", testDiffCommonLines),
+    ("diff added lines", testDiffAddedLines),
+    ("diff removed lines", testDiffRemovedLines),
+    ("diff annotated text", testDiffAnnotatedText),
+    ("diff empty base", testDiffEmptyBase),
+    ("diff empty changed", testDiffEmptyChanged)
 ]
 
 do {

@@ -8,6 +8,7 @@ struct OhbeeEditorApp: App {
     @State private var isSearchVisible = false
     @State private var isAboutVisible = false
     @State private var isHelpVisible = false
+    @State private var isCompareVisible = false
     @AppStorage("ohbee.lineNumbers") private var showLineNumbers = true
     @AppStorage("ohbee.fontSize") private var fontSize: Double = 13
 
@@ -22,6 +23,15 @@ struct OhbeeEditorApp: App {
                 .sheet(isPresented: $isHelpVisible) {
                     OhbeeHelpView()
                 }
+                .sheet(isPresented: $isCompareVisible) {
+                    CompareTabsSheet(
+                        documents: store.documents,
+                        isPresented: $isCompareVisible,
+                        onCompare: { baseID, changedID in
+                            store.openDiffTab(baseID: baseID, changedID: changedID)
+                        }
+                    )
+                }
                 .onOpenURL { url in
                     guard url.isFileURL else {
                         return
@@ -35,6 +45,12 @@ struct OhbeeEditorApp: App {
             CommandGroup(replacing: .appInfo) {
                 Button("About Ohbee Editor") {
                     isAboutVisible = true
+                }
+                Divider()
+                Button("Check for Updates…") {
+                    if let url = URL(string: "https://ohbee.link") {
+                        NSWorkspace.shared.open(url)
+                    }
                 }
             }
 
@@ -118,6 +134,14 @@ struct OhbeeEditorApp: App {
                     isSearchVisible = true
                 }
                 .keyboardShortcut("f", modifiers: [.command, .option])
+
+                Divider()
+
+                Button("Compare Tabs…") {
+                    isCompareVisible = true
+                }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+                .disabled(store.documents.count < 2)
 
                 Divider()
 
@@ -205,6 +229,17 @@ struct OhbeeEditorApp: App {
 
                 Divider()
 
+                Button("Format XML") { apply("Format XML", XMLTools.format) }
+                    .disabled(!store.selectedDocumentSupportsXMLTools)
+                Button("Minify XML") { apply("Minify XML", XMLTools.minify) }
+                    .disabled(!store.selectedDocumentSupportsXMLTools)
+
+                Divider()
+
+                Button("Word Frequency") { wordFrequency() }
+
+                Divider()
+
                 Button("URL Encode") { apply("URL Encode", URLTools.encode) }
                 Button("URL Decode") { apply("URL Decode", URLTools.decode) }
                 Button("Remove Tracking Parameters") { apply("Remove Tracking Parameters", URLTools.removeTrackingParameters) }
@@ -261,6 +296,17 @@ struct OhbeeEditorApp: App {
 
     private func duplicateLineInActiveEditor() {
         EditorTextOperationCenter.shared.duplicateLineInActiveEditor()
+    }
+
+    private func wordFrequency() {
+        EditorTextOperationCenter.shared.inspectText(named: "Word Frequency", store: store) { text in
+            let entries = WordFrequencyTools.topWords(in: text, limit: 5)
+            if entries.isEmpty {
+                return ("No words found.", .neutral)
+            }
+            let preview = entries.map { "\($0.word)×\($0.count)" }.joined(separator: ", ")
+            return ("Top words: \(preview)", .neutral)
+        }
     }
 
     private func detectSensitiveText() {
