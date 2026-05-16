@@ -34,6 +34,13 @@ struct OhbeeHelpView: View {
                         HelpRow("Minify JSON",            shortcut: "⌘⇧M")
                         HelpRow("Clean AI Output",        shortcut: "⌘⇧K")
                         HelpRow("Detect Sensitive Text",  shortcut: "⌘⇧R")
+                        HelpRow("Duplicate Line",         shortcut: "⌘⇧D")
+                        HelpRow("Move Line Up",           shortcut: "⌥↑")
+                        HelpRow("Move Line Down",         shortcut: "⌥↓")
+                        HelpRow("Increase Font Size",     shortcut: "⌘+")
+                        HelpRow("Decrease Font Size",     shortcut: "⌘−")
+                        HelpRow("Reset Font Size",        shortcut: "⌘0")
+                        HelpRow("Open Hyperlink",         shortcut: "⌘ Click")
                     }
 
                     HelpSection(title: "Gestures") {
@@ -62,6 +69,8 @@ struct OhbeeHelpView: View {
                         HelpTip("Change syntax highlighting via **View → Language**.")
                         HelpTip("Toggle line numbers via **View → Show Line Numbers**.")
                         HelpTip("Document stats (lines, words, characters) appear in the status bar **(i)** button.")
+                        HelpTip("URLs in the editor are underlined — **⌘ Click** to open in the browser.")
+                        HelpTip("SHA-256 and MD5 hashes are available under the **Hash** status bar menu.")
                     }
                 }
                 .padding(.bottom, 8)

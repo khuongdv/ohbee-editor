@@ -139,6 +139,11 @@ final class EditorTextOperationCenter {
         }
     }
 
+    func duplicateLineInActiveEditor() {
+        guard let textView = textView as? SmartIndentingTextView else { return }
+        textView.triggerDuplicateLine()
+    }
+
     private func activeTextView(for store: EditorStore) -> NSTextView? {
         guard
             let textView,

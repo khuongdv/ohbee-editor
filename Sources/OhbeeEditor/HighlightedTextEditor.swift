@@ -8,6 +8,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
     let documentID: EditorDocument.ID
     var showLineNumbers: Bool = true
     var isLargeFile: Bool = false
+    var fontSize: CGFloat = NSFont.systemFontSize
     var onFileDrop: (([URL]) -> Void)? = nil
 
     /// Line numbers are disabled for large files to prevent per-keystroke full scans.
@@ -25,6 +26,10 @@ struct HighlightedTextEditor: NSViewRepresentable {
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = true
         scrollView.backgroundColor = .textBackgroundColor
+        // Layer-backed so the scroll view clips its ruler and content to its own bounds,
+        // preventing the gutter separator from rendering into adjacent SwiftUI views.
+        scrollView.wantsLayer = true
+        scrollView.layer?.masksToBounds = true
 
         let textView = SmartIndentingTextView()
         textView.delegate = context.coordinator
@@ -36,7 +41,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
         textView.allowsUndo = true
-        textView.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        textView.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
         textView.textColor = .textColor
         textView.backgroundColor = .textBackgroundColor
         textView.insertionPointColor = .controlAccentColor
@@ -57,6 +62,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
         context.coordinator.documentID = documentID
         context.coordinator.language = language
         context.coordinator.isLargeFile = isLargeFile
+        context.coordinator.fontSize = fontSize
         context.coordinator.applyHighlighting(to: textView)
         EditorTextOperationCenter.shared.register(textView: textView, documentID: documentID)
         textView.onFileDrop = onFileDrop
@@ -90,9 +96,11 @@ struct HighlightedTextEditor: NSViewRepresentable {
         context.coordinator.text = $text
         let documentChanged = context.coordinator.documentID != documentID
         let languageChanged = context.coordinator.language != language
+        let fontSizeChanged = context.coordinator.fontSize != fontSize
         context.coordinator.documentID = documentID
         context.coordinator.language = language
         context.coordinator.isLargeFile = isLargeFile
+        context.coordinator.fontSize = fontSize
         EditorTextOperationCenter.shared.register(textView: textView, documentID: documentID)
 
         if effectiveShowLineNumbers {
@@ -105,6 +113,12 @@ struct HighlightedTextEditor: NSViewRepresentable {
             scrollView.verticalRulerView?.needsDisplay = true
         } else {
             scrollView.rulersVisible = false
+        }
+
+        if fontSizeChanged {
+            let newFont = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+            textView.font = newFont
+            context.coordinator.applyHighlighting(to: textView)
         }
 
         if textView.string != text {
@@ -143,6 +157,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
         var documentID: EditorDocument.ID?
         var isApplyingExternalText = false
         var isLargeFile: Bool = false
+        var fontSize: CGFloat = NSFont.systemFontSize
 
         private let highlighter = SimpleSyntaxHighlighter()
         private var pendingHighlight: DispatchWorkItem?
@@ -164,7 +179,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
             pendingHighlight?.cancel()
             pendingHighlight = nil
             guard !isLargeFile else {
-                let font = textView.font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+                let font = textView.font ?? .monospacedSystemFont(ofSize: fontSize, weight: .regular)
                 textView.typingAttributes = [.font: font, .foregroundColor: NSColor.textColor]
                 return
             }
@@ -198,7 +213,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
     }
 }
 
-private final class SmartIndentingTextView: NSTextView {
+final class SmartIndentingTextView: NSTextView {
     var languageProvider: (() -> EditorLanguage)?
     var onFileDrop: (([URL]) -> Void)?
 
@@ -313,9 +328,33 @@ private final class SmartIndentingTextView: NSTextView {
         static let backspace: UInt16 = 51
         static let forwardDelete: UInt16 = 117
         static let escape: UInt16 = 53
+        static let arrowUp: UInt16 = 126
+        static let arrowDown: UInt16 = 125
     }
 
     override func keyDown(with event: NSEvent) {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        // Cmd+Shift+D → duplicate current line
+        if flags == [.command, .shift], event.charactersIgnoringModifiers?.lowercased() == "d" {
+            duplicateLine()
+            return
+        }
+
+        // Option+Up / Option+Down → move line (outside column-select mode)
+        if flags == .option, !isColumnSelecting {
+            switch event.keyCode {
+            case KeyCode.arrowUp:
+                moveLineUp()
+                return
+            case KeyCode.arrowDown:
+                moveLineDown()
+                return
+            default:
+                break
+            }
+        }
+
         guard isColumnSelecting else {
             super.keyDown(with: event)
             return
@@ -328,6 +367,91 @@ private final class SmartIndentingTextView: NSTextView {
         default:
             exitColumnMode()
             super.keyDown(with: event)
+        }
+    }
+
+    // MARK: - Line Operations
+
+    func triggerDuplicateLine() { duplicateLine() }
+
+    private func duplicateLine() {
+        let ns = string as NSString
+        let cursorLoc = selectedRange().location
+        let lineRange = ns.lineRange(for: NSRange(location: min(cursorLoc, max(ns.length - 1, 0)), length: 0))
+        let lineText = ns.substring(with: lineRange)
+        let textToInsert: String
+        let insertionPoint: Int
+        if lineText.hasSuffix("\n") {
+            textToInsert = lineText
+            insertionPoint = NSMaxRange(lineRange)
+        } else {
+            textToInsert = "\n" + lineText
+            insertionPoint = NSMaxRange(lineRange)
+        }
+        undoManager?.beginUndoGrouping()
+        insertText(textToInsert, replacementRange: NSRange(location: insertionPoint, length: 0))
+        undoManager?.endUndoGrouping()
+        let offset = cursorLoc - lineRange.location
+        let newLoc = insertionPoint + (lineText.hasSuffix("\n") ? 0 : 1) + offset
+        setSelectedRange(NSRange(location: min(newLoc, (string as NSString).length), length: 0))
+    }
+
+    private func moveLineUp() {
+        let ns = string as NSString
+        let sel = selectedRange()
+        let curLineRange = ns.lineRange(for: NSRange(location: min(sel.location, max(ns.length - 1, 0)), length: 0))
+        guard curLineRange.location > 0 else { return }
+        let prevLineRange = ns.lineRange(for: NSRange(location: curLineRange.location - 1, length: 0))
+        let curLine = ns.substring(with: curLineRange)
+        let prevLine = ns.substring(with: prevLineRange)
+        let combinedRange = NSRange(location: prevLineRange.location, length: prevLineRange.length + curLineRange.length)
+        let swapped: String
+        if curLine.hasSuffix("\n") {
+            swapped = curLine + prevLine
+        } else {
+            swapped = curLine + "\n" + String(prevLine.dropLast())
+        }
+        undoManager?.beginUndoGrouping()
+        insertText(swapped, replacementRange: combinedRange)
+        undoManager?.endUndoGrouping()
+        let offset = sel.location - curLineRange.location
+        let newLoc = prevLineRange.location + offset
+        setSelectedRange(NSRange(location: min(newLoc, (string as NSString).length), length: 0))
+    }
+
+    private func moveLineDown() {
+        let ns = string as NSString
+        let sel = selectedRange()
+        let curLineRange = ns.lineRange(for: NSRange(location: min(sel.location, max(ns.length - 1, 0)), length: 0))
+        let nextStart = NSMaxRange(curLineRange)
+        guard nextStart < ns.length else { return }
+        let nextLineRange = ns.lineRange(for: NSRange(location: nextStart, length: 0))
+        let curLine = ns.substring(with: curLineRange)
+        let nextLine = ns.substring(with: nextLineRange)
+        let combinedRange = NSRange(location: curLineRange.location, length: curLineRange.length + nextLineRange.length)
+        let swapped: String
+        if nextLine.hasSuffix("\n") {
+            swapped = nextLine + curLine
+        } else {
+            swapped = nextLine + "\n" + String(curLine.dropLast())
+        }
+        undoManager?.beginUndoGrouping()
+        insertText(swapped, replacementRange: combinedRange)
+        undoManager?.endUndoGrouping()
+        let movedLineStart = curLineRange.location + nextLineRange.length
+        let offset = sel.location - curLineRange.location
+        let newLoc = movedLineStart + offset
+        setSelectedRange(NSRange(location: min(newLoc, (string as NSString).length), length: 0))
+    }
+
+    // MARK: - Link Handling
+
+    override func clicked(onLink link: Any, at charIndex: Int) {
+        guard NSApp.currentEvent?.modifierFlags.contains(.command) == true else { return }
+        if let url = link as? URL {
+            NSWorkspace.shared.open(url)
+        } else if let str = link as? String, let url = URL(string: str) {
+            NSWorkspace.shared.open(url)
         }
     }
 
@@ -408,10 +532,26 @@ private final class SimpleSyntaxHighlighter {
 
         if text.count <= maxHighlightedCharacters {
             highlight(language: language, text: text, storage: storage)
+            detectLinks(text: text, storage: storage)
         }
 
         storage.endEditing()
         textView.typingAttributes = defaultAttributes
+    }
+
+    private func detectLinks(text: String, storage: NSTextStorage) {
+        guard let detector = try? NSDataDetector(
+            types: NSTextCheckingResult.CheckingType.link.rawValue
+        ) else { return }
+        let range = NSRange(location: 0, length: (text as NSString).length)
+        for match in detector.matches(in: text, options: [], range: range) {
+            guard let url = match.url else { continue }
+            storage.addAttributes([
+                .link: url,
+                .foregroundColor: NSColor.linkColor,
+                .underlineStyle: NSUnderlineStyle.single.rawValue
+            ], range: match.range)
+        }
     }
 
     private func highlight(language: EditorLanguage, text: String, storage: NSTextStorage) {

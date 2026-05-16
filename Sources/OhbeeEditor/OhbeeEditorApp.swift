@@ -9,6 +9,7 @@ struct OhbeeEditorApp: App {
     @State private var isAboutVisible = false
     @State private var isHelpVisible = false
     @AppStorage("ohbee.lineNumbers") private var showLineNumbers = true
+    @AppStorage("ohbee.fontSize") private var fontSize: Double = 13
 
     var body: some Scene {
         WindowGroup {
@@ -142,6 +143,23 @@ struct OhbeeEditorApp: App {
                 }
 
                 Toggle("Show Line Numbers", isOn: $showLineNumbers)
+
+                Divider()
+
+                Button("Increase Font Size") {
+                    fontSize = min(fontSize + 1.0, 36.0)
+                }
+                .keyboardShortcut("=", modifiers: .command)
+
+                Button("Decrease Font Size") {
+                    fontSize = max(fontSize - 1.0, 10.0)
+                }
+                .keyboardShortcut("-", modifiers: .command)
+
+                Button("Reset Font Size") {
+                    fontSize = 13.0
+                }
+                .keyboardShortcut("0", modifiers: .command)
             }
 
             CommandGroup(replacing: .help) {
@@ -196,6 +214,16 @@ struct OhbeeEditorApp: App {
                 Button("Detect Sensitive Text") { detectSensitiveText() }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
                 Button("Mask Detected Patterns") { apply("Mask Detected Patterns", SafeShare.maskDetectedPatterns) }
+
+                Divider()
+
+                Button("SHA-256 Checksum") { computeChecksum("SHA-256", ChecksumTools.sha256(of:)) }
+                Button("MD5 Checksum") { computeChecksum("MD5", ChecksumTools.md5(of:)) }
+
+                Divider()
+
+                Button("Duplicate Line") { duplicateLineInActiveEditor() }
+                    .keyboardShortcut("d", modifiers: [.command, .shift])
             }
         }
     }
@@ -220,6 +248,19 @@ struct OhbeeEditorApp: App {
                 return (message, .warning)
             }
         }
+    }
+
+    private func computeChecksum(_ name: String, _ fn: (String) -> String?) {
+        EditorTextOperationCenter.shared.inspectText(named: name, store: store) { text in
+            if let hash = fn(text) {
+                return (hash, .neutral)
+            }
+            return ("Cannot compute \(name).", .warning)
+        }
+    }
+
+    private func duplicateLineInActiveEditor() {
+        EditorTextOperationCenter.shared.duplicateLineInActiveEditor()
     }
 
     private func detectSensitiveText() {

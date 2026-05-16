@@ -309,6 +309,27 @@ struct ContentView: View {
             .controlSize(.small)
             .font(.caption)
 
+            Menu("Hash") {
+                Button("SHA-256") {
+                    EditorTextOperationCenter.shared.inspectText(named: "SHA-256", store: store) { text in
+                        if let hash = ChecksumTools.sha256(of: text) {
+                            return (hash, .neutral)
+                        }
+                        return ("Cannot compute SHA-256.", .warning)
+                    }
+                }
+                Button("MD5") {
+                    EditorTextOperationCenter.shared.inspectText(named: "MD5", store: store) { text in
+                        if let hash = ChecksumTools.md5(of: text) {
+                            return (hash, .neutral)
+                        }
+                        return ("Cannot compute MD5.", .warning)
+                    }
+                }
+            }
+            .controlSize(.small)
+            .font(.caption)
+
             Menu("Safe Share") {
                 Button("Detect Sensitive Text") {
                     EditorTextOperationCenter.shared.inspectText(named: "Safe Share", store: store) { text in
@@ -479,6 +500,7 @@ private struct ScratchEditorView: View {
     @Binding var text: String
     let onFileDrop: ([URL]) -> Void
     @AppStorage("ohbee.lineNumbers") private var showLineNumbers = true
+    @AppStorage("ohbee.fontSize") private var fontSize: Double = 13
 
     var body: some View {
         VStack(spacing: 0) {
@@ -501,12 +523,15 @@ private struct ScratchEditorView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
 
+            Divider()
+
             HighlightedTextEditor(
                 text: $text,
                 language: document.effectiveLanguage,
                 documentID: document.id,
                 showLineNumbers: showLineNumbers,
                 isLargeFile: document.isLargeFile,
+                fontSize: CGFloat(fontSize),
                 onFileDrop: onFileDrop
             )
                 .background(Color(nsColor: .textBackgroundColor))
