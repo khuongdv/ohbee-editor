@@ -2,6 +2,7 @@ import Foundation
 
 public enum EditorLanguage: String, CaseIterable, Codable, Equatable, Identifiable {
     case plainText
+    case c
     case java
     case javascript
     case json
@@ -25,6 +26,8 @@ public enum EditorLanguage: String, CaseIterable, Codable, Equatable, Identifiab
         switch self {
         case .plainText:
             return "Plain Text"
+        case .c:
+            return "C"
         case .java:
             return "Java"
         case .javascript:
@@ -74,6 +77,8 @@ public enum EditorLanguage: String, CaseIterable, Codable, Equatable, Identifiab
             return .xml
         case "cs":
             return .cSharp
+        case "c", "h":
+            return .c
         case "cpp", "cc", "cxx", "hpp", "hh", "hxx":
             return .cPlusPlus
         case "sql":

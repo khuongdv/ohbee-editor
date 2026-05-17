@@ -8,6 +8,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
     let documentID: EditorDocument.ID
     var showLineNumbers: Bool = true
     var isLargeFile: Bool = false
+    var isReadOnly: Bool = false
     var fontSize: CGFloat = NSFont.systemFontSize
     var onFileDrop: (([URL]) -> Void)? = nil
 
@@ -44,7 +45,8 @@ struct HighlightedTextEditor: NSViewRepresentable {
         textView.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
         textView.textColor = .textColor
         textView.backgroundColor = .textBackgroundColor
-        textView.insertionPointColor = .controlAccentColor
+        textView.isEditable = !isReadOnly
+        textView.insertionPointColor = isReadOnly ? .clear : .controlAccentColor
         textView.textContainerInset = NSSize(width: 10, height: 10)
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
@@ -102,6 +104,8 @@ struct HighlightedTextEditor: NSViewRepresentable {
         context.coordinator.isLargeFile = isLargeFile
         context.coordinator.fontSize = fontSize
         EditorTextOperationCenter.shared.register(textView: textView, documentID: documentID)
+        textView.isEditable = !isReadOnly
+        textView.insertionPointColor = isReadOnly ? .clear : .controlAccentColor
 
         if effectiveShowLineNumbers {
             if !(scrollView.verticalRulerView is LineNumberRulerView) {
@@ -574,7 +578,7 @@ private final class SimpleSyntaxHighlighter {
             highlightMarkdown(text: text, storage: storage)
         case .java:
             highlightJava(text: text, storage: storage)
-        case .javascript, .cSharp, .cPlusPlus, .swift, .python, .shell:
+        case .javascript, .c, .cSharp, .cPlusPlus, .swift, .python, .shell:
             highlightCode(definition: codeDefinition(for: language), text: text, storage: storage)
         }
     }
@@ -835,6 +839,28 @@ private final class SimpleSyntaxHighlighter {
 
     private func codeDefinition(for language: EditorLanguage) -> CodeHighlightDefinition {
         switch language {
+        case .c:
+            return CodeHighlightDefinition(
+                keywords: [
+                    "auto", "break", "case", "char", "const", "continue", "default", "do", "double",
+                    "else", "enum", "extern", "float", "for", "goto", "if", "inline", "int", "long",
+                    "register", "restrict", "return", "short", "signed", "sizeof", "static", "struct",
+                    "switch", "typedef", "union", "unsigned", "void", "volatile", "while",
+                    "NULL", "true", "false"
+                ],
+                builtins: [
+                    "size_t", "ptrdiff_t", "int8_t", "int16_t", "int32_t", "int64_t",
+                    "uint8_t", "uint16_t", "uint32_t", "uint64_t", "FILE", "stdin", "stdout", "stderr",
+                    "printf", "fprintf", "sprintf", "scanf", "fopen", "fclose", "fread", "fwrite",
+                    "malloc", "calloc", "realloc", "free", "memcpy", "memset", "strlen", "strcmp",
+                    "strcpy", "strcat", "exit", "abort"
+                ],
+                annotations: [],
+                lineCommentPattern: #"//.*$"#,
+                blockCommentPattern: #"/\*[\s\S]*?\*/"#,
+                stringPattern: #""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'"#,
+                numberPattern: #"(?<![\w.])(?:0[xX][0-9A-Fa-f_]+|0[bB][01_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d[\d_]*)?[fFlLuU]*)(?![\w.])"#
+            )
         case .javascript:
             return CodeHighlightDefinition(
                 keywords: [

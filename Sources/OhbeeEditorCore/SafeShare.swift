@@ -9,7 +9,13 @@ public struct SafeShareFinding: Equatable {
 public enum SafeShare {
     private struct Detector {
         let category: String
-        let pattern: String
+        let regex: NSRegularExpression
+
+        init(category: String, pattern: String) {
+            self.category = category
+            // try! is safe: all patterns are hardcoded string literals, never user input
+            self.regex = try! NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+        }
     }
 
     private static let detectors: [Detector] = [
@@ -67,18 +73,13 @@ public enum SafeShare {
     }
 
     private static func findings(for detector: Detector, in text: String) -> [SafeShareFinding] {
-        do {
-            let regex = try NSRegularExpression(pattern: detector.pattern, options: [.caseInsensitive])
-            let range = NSRange(location: 0, length: (text as NSString).length)
-            return regex.matches(in: text, range: range).map { match in
-                SafeShareFinding(
-                    category: detector.category,
-                    range: match.range,
-                    text: (text as NSString).substring(with: match.range)
-                )
-            }
-        } catch {
-            return []
+        let range = NSRange(location: 0, length: (text as NSString).length)
+        return detector.regex.matches(in: text, range: range).map { match in
+            SafeShareFinding(
+                category: detector.category,
+                range: match.range,
+                text: (text as NSString).substring(with: match.range)
+            )
         }
     }
 

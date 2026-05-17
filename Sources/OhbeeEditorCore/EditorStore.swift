@@ -286,6 +286,7 @@ public final class EditorStore: ObservableObject {
 
     /// Opens a file asynchronously. A placeholder tab appears immediately while the
     /// file is read on a background thread, then the text is delivered on the main thread.
+    /// Image files (png/jpg/jpeg/webp/bmp/svg) skip text loading and are shown in ImageViewerView.
     public func openDocument(from fileURL: URL) {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             removeRecentFile(fileURL)
@@ -305,19 +306,26 @@ public final class EditorStore: ObservableObject {
             return
         }
 
-        let fileSize = EditorFileIO.byteCount(of: fileURL) ?? 0
-        let category = LargeFilePolicy.classify(byteCount: fileSize)
+        let isImageFile = EditorDocument.imageExtensions.contains(fileURL.pathExtension.lowercased())
+        let isReadOnly = !FileManager.default.isWritableFile(atPath: fileURL.path)
 
-        if category == .tooLarge {
-            setStatus(
-                "\(fileURL.lastPathComponent) exceeds \(LargeFilePolicy.maximumByteLimit / 1_048_576) MB. " +
-                "Ohbee Editor is not designed for files this large.",
-                tone: .warning
-            )
-            return
+        var isLargeFile = false
+        if !isImageFile {
+            let fileSize = EditorFileIO.byteCount(of: fileURL) ?? 0
+            let category = LargeFilePolicy.classify(byteCount: fileSize)
+
+            if category == .tooLarge {
+                setStatus(
+                    "\(fileURL.lastPathComponent) exceeds \(LargeFilePolicy.maximumByteLimit / 1_048_576) MB. " +
+                    "Ohbee Editor is not designed for files this large.",
+                    tone: .warning
+                )
+                return
+            }
+
+            isLargeFile = category != .normal
         }
 
-        let isLargeFile = category != .normal
         let now = Date()
         let placeholder = EditorDocument(
             id: UUID(),
@@ -328,12 +336,20 @@ public final class EditorStore: ObservableObject {
             isDirty: false,
             createdAt: now,
             updatedAt: now,
-            isLargeFile: isLargeFile
+            isLargeFile: isLargeFile,
+            isReadOnly: isReadOnly
         )
 
         documents.append(placeholder)
         selectedDocumentID = placeholder.id
         currentMatchIndex = nil
+
+        if isImageFile {
+            setStatus("Opened \(fileURL.lastPathComponent).")
+            addRecentFile(fileURL)
+            saveSession()
+            return
+        }
 
         if isLargeFile {
             setStatus(
@@ -417,6 +433,12 @@ public final class EditorStore: ObservableObject {
             return false
         }
 
+        // Block overwriting the original read-only file; Save As to a new path is always allowed.
+        if documents[index].isReadOnly, fileURL == documents[index].fileURL {
+            setStatus("Cannot save: \(documents[index].title) is read-only.", tone: .warning)
+            return false
+        }
+
         do {
             try fileIO.save(documents[index], to: fileURL)
 
@@ -425,6 +447,7 @@ public final class EditorStore: ObservableObject {
             document.title = fileURL.lastPathComponent
             document.isScratch = false
             document.isDirty = false
+            document.isReadOnly = false
             document.updatedAt = Date()
             documents[index] = document
             setStatus("Saved \(document.title).")
@@ -443,6 +466,9 @@ public final class EditorStore: ObservableObject {
         guard let index = selectedDocumentIndex else {
             return
         }
+
+        guard !documents[index].isImageFile else { return }
+        guard !documents[index].isReadOnly else { return }
 
         // SwiftUI.TextEditor on the current macOS target does not expose a stable
         // selection binding, so Phase 4 applies transforms to the full document.
@@ -527,6 +553,19 @@ public final class EditorStore: ObservableObject {
 
     public func setCaseSensitiveSearchEnabled(_ enabled: Bool) {
         searchOptions.isCaseSensitive = enabled
+        guard !(selectedDocument?.isLargeFile == true) else {
+            currentMatchIndex = nil
+            return
+        }
+        currentMatchIndex = SearchReplaceEngine.nextMatchIndex(
+            in: selectedDocument?.text ?? "",
+            options: searchOptions,
+            currentMatchIndex: nil
+        )
+    }
+
+    public func setWholeWordSearchEnabled(_ enabled: Bool) {
+        searchOptions.isWholeWord = enabled
         guard !(selectedDocument?.isLargeFile == true) else {
             currentMatchIndex = nil
             return
@@ -723,11 +762,13 @@ public final class EditorStore: ObservableObject {
     private func reloadFileBackedDocumentsIfNeeded() {
         for doc in documents {
             guard let fileURL = doc.fileURL, !doc.isDirty, doc.text.isEmpty else { continue }
+            guard !doc.isImageFile else { continue }
             guard FileManager.default.fileExists(atPath: fileURL.path) else { continue }
 
             let docID = doc.id
             let fileSize = EditorFileIO.byteCount(of: fileURL) ?? 0
             let isLargeFile = LargeFilePolicy.classify(byteCount: fileSize) != .normal
+            let isReadOnly = !FileManager.default.isWritableFile(atPath: fileURL.path)
 
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 guard let text = try? EditorFileIO().readText(from: fileURL) else { return }
@@ -736,6 +777,7 @@ public final class EditorStore: ObservableObject {
                           let idx = self.documents.firstIndex(where: { $0.id == docID }) else { return }
                     self.documents[idx].text = text
                     self.documents[idx].isLargeFile = isLargeFile
+                    self.documents[idx].isReadOnly = isReadOnly
                 }
             }
         }

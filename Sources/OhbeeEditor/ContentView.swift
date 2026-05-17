@@ -222,6 +222,16 @@ struct ContentView: View {
             .toggleStyle(.checkbox)
             .font(.caption)
 
+            Toggle("Word", isOn: Binding(
+                get: { store.searchOptions.isWholeWord },
+                set: { enabled in
+                    store.setWholeWordSearchEnabled(enabled)
+                    selectCurrentSearchMatch()
+                }
+            ))
+            .toggleStyle(.checkbox)
+            .font(.caption)
+
             Spacer()
 
             Button {
@@ -240,15 +250,20 @@ struct ContentView: View {
     @ViewBuilder
     private var editorArea: some View {
         if let document = store.selectedDocument {
-            ScratchEditorView(
-                document: document,
-                text: store.textBinding(for: document.id),
-                onFileDrop: { urls in
-                    for url in urls {
-                        store.openDocument(from: url)
+            if document.isImageFile {
+                ImageViewerView(document: document)
+                    .id(document.id)
+            } else {
+                ScratchEditorView(
+                    document: document,
+                    text: store.textBinding(for: document.id),
+                    onFileDrop: { urls in
+                        for url in urls {
+                            store.openDocument(from: url)
+                        }
                     }
-                }
-            )
+                )
+            }
         } else {
             Text("No Document")
                 .foregroundStyle(.secondary)
@@ -263,7 +278,8 @@ struct ContentView: View {
                 transformButton("Trim Trailing Spaces", BasicTextTransforms.trimTrailingWhitespace)
                 transformButton("Remove Empty Lines", BasicTextTransforms.removeEmptyLines)
                 transformButton("Remove Duplicate Lines", BasicTextTransforms.removeDuplicateLines)
-                transformButton("Sort Lines", BasicTextTransforms.sortLines)
+                transformButton("Sort Lines A→Z", BasicTextTransforms.sortLines)
+                transformButton("Sort Lines Z→A", BasicTextTransforms.sortLinesDescending)
                 transformButton("Join Lines", BasicTextTransforms.joinLines)
             }
             .controlSize(.small)
@@ -276,6 +292,7 @@ struct ContentView: View {
                 transformButton("snake_case", BasicTextTransforms.snakeCase)
                 transformButton("kebab-case", BasicTextTransforms.kebabCase)
                 transformButton("camelCase", BasicTextTransforms.camelCase)
+                transformButton("PascalCase", BasicTextTransforms.pascalCase)
             }
             .controlSize(.small)
             .font(.caption)
@@ -561,6 +578,13 @@ private struct ScratchEditorView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                if document.isReadOnly {
+                    Image(systemName: "lock.fill")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .help("Read-only file")
+                }
+
                 Text(document.effectiveLanguage.displayName)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -578,6 +602,7 @@ private struct ScratchEditorView: View {
                 documentID: document.id,
                 showLineNumbers: showLineNumbers,
                 isLargeFile: document.isLargeFile,
+                isReadOnly: document.isReadOnly,
                 fontSize: CGFloat(fontSize),
                 onFileDrop: onFileDrop
             )
@@ -709,15 +734,23 @@ private struct TabItemView: View {
     var body: some View {
         HStack(spacing: 0) {
             Button(action: action) {
-                Text(document.title)
-                    .font(.subheadline)
-                    .fontWeight(isSelected ? .medium : .regular)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .foregroundStyle(isSelected ? Color.primary : Color.secondary)
-                    .padding(.leading, 9)
-                    .padding(.trailing, 3)
-                    .padding(.vertical, 5)
+                HStack(spacing: 3) {
+                    Text(document.title)
+                        .font(.subheadline)
+                        .fontWeight(isSelected ? .medium : .regular)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+
+                    if document.isReadOnly {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 7, weight: .semibold))
+                            .foregroundStyle(Color.secondary.opacity(isSelected ? 0.8 : 0.5))
+                    }
+                }
+                .padding(.leading, 9)
+                .padding(.trailing, 3)
+                .padding(.vertical, 5)
             }
             .buttonStyle(.plain)
 

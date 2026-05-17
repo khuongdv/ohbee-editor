@@ -73,6 +73,15 @@ public enum BasicTextTransforms {
         )
     }
 
+    public static func sortLinesDescending(_ text: String) -> TextTransformResult {
+        let lines = splitLines(text)
+
+        return .success(
+            text: lines.sorted { $0.localizedStandardCompare($1) == .orderedDescending }.joined(separator: "\n"),
+            summary: lineSummary("Sorted descending", count: lines.count)
+        )
+    }
+
     public static func joinLines(_ text: String) -> TextTransformResult {
         let lines = splitLines(text)
         let joined = lines
@@ -117,6 +126,15 @@ public enum BasicTextTransforms {
         return .success(
             text: ([first.lowercase] + tail).joined(),
             summary: "Converted text to camelCase."
+        )
+    }
+
+    public static func pascalCase(_ text: String) -> TextTransformResult {
+        let tokens = words(in: text)
+
+        return .success(
+            text: tokens.map { $0.lowercase.capitalized }.joined(),
+            summary: "Converted text to PascalCase."
         )
     }
 

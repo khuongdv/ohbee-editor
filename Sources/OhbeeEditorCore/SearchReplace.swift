@@ -5,17 +5,20 @@ public struct SearchOptions: Equatable {
     public var replacement: String
     public var usesRegex: Bool
     public var isCaseSensitive: Bool
+    public var isWholeWord: Bool
 
     public init(
         query: String = "",
         replacement: String = "",
         usesRegex: Bool = false,
-        isCaseSensitive: Bool = false
+        isCaseSensitive: Bool = false,
+        isWholeWord: Bool = false
     ) {
         self.query = query
         self.replacement = replacement
         self.usesRegex = usesRegex
         self.isCaseSensitive = isCaseSensitive
+        self.isWholeWord = isWholeWord
     }
 }
 
@@ -142,18 +145,27 @@ public enum SearchReplaceEngine {
             return .failure(message: "Enter text to find.")
         }
 
-        if options.usesRegex {
+        if options.usesRegex || options.isWholeWord {
             do {
                 let regex = try regularExpression(for: options)
                 let range = NSRange(location: 0, length: (text as NSString).length)
-                let count = regex.numberOfMatches(in: text, range: range)
-                let replaced = regex.stringByReplacingMatches(
-                    in: text,
-                    range: range,
-                    withTemplate: options.replacement
-                )
-
-                return .success(text: replaced, replacementCount: count)
+                if options.usesRegex {
+                    let count = regex.numberOfMatches(in: text, range: range)
+                    let replaced = regex.stringByReplacingMatches(
+                        in: text,
+                        range: range,
+                        withTemplate: options.replacement
+                    )
+                    return .success(text: replaced, replacementCount: count)
+                } else {
+                    // Whole-word plain: literal replacement, no backreference expansion
+                    let matches = regex.matches(in: text, range: range).map(\.range)
+                    var result = text as NSString
+                    for r in matches.reversed() {
+                        result = result.replacingCharacters(in: r, with: options.replacement) as NSString
+                    }
+                    return .success(text: result as String, replacementCount: matches.count)
+                }
             } catch {
                 return .failure(message: "Invalid regular expression.")
             }
@@ -177,7 +189,7 @@ public enum SearchReplaceEngine {
             return []
         }
 
-        if options.usesRegex {
+        if options.usesRegex || options.isWholeWord {
             do {
                 let regex = try regularExpression(for: options)
                 let range = NSRange(location: 0, length: (text as NSString).length)
@@ -212,7 +224,13 @@ public enum SearchReplaceEngine {
 
     private static func regularExpression(for options: SearchOptions) throws -> NSRegularExpression {
         let regexOptions: NSRegularExpression.Options = options.isCaseSensitive ? [] : [.caseInsensitive]
-        return try NSRegularExpression(pattern: options.query, options: regexOptions)
+        let basePattern = options.usesRegex
+            ? options.query
+            : NSRegularExpression.escapedPattern(for: options.query)
+        let pattern = options.isWholeWord
+            ? #"(?<!\w)(?:"# + basePattern + #")(?!\w)"#
+            : basePattern
+        return try NSRegularExpression(pattern: pattern, options: regexOptions)
     }
 
     private static func replacementText(source: String, options: SearchOptions) -> String {

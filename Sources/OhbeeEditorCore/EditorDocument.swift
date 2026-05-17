@@ -15,6 +15,16 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
     /// Not persisted in the session. Defaults to false on decode.
     public var isLargeFile: Bool = false
 
+    /// Set to true when the file on disk is not writable. Not persisted. Defaults to false on decode.
+    public var isReadOnly: Bool = false
+
+    public static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "webp", "bmp", "svg"]
+
+    public var isImageFile: Bool {
+        guard let ext = fileURL?.pathExtension.lowercased() else { return false }
+        return Self.imageExtensions.contains(ext)
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id, title, text, fileURL, isScratch, isDirty, createdAt, updatedAt, language
     }
@@ -29,7 +39,8 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
         createdAt: Date,
         updatedAt: Date,
         language: EditorLanguage? = nil,
-        isLargeFile: Bool = false
+        isLargeFile: Bool = false,
+        isReadOnly: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -41,6 +52,7 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
         self.updatedAt = updatedAt
         self.language = language
         self.isLargeFile = isLargeFile
+        self.isReadOnly = isReadOnly
     }
 
     public var effectiveLanguage: EditorLanguage {
@@ -62,7 +74,7 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
         )
     }
 
-    // isLargeFile is intentionally excluded: it is a runtime classification, not document identity.
+    // isLargeFile and isReadOnly are intentionally excluded: runtime classifications, not document identity.
     public static func == (lhs: EditorDocument, rhs: EditorDocument) -> Bool {
         lhs.id == rhs.id &&
         lhs.title == rhs.title &&
