@@ -448,17 +448,6 @@ final class SmartIndentingTextView: NSTextView {
         setSelectedRange(NSRange(location: min(newLoc, (string as NSString).length), length: 0))
     }
 
-    // MARK: - Link Handling
-
-    override func clicked(onLink link: Any, at charIndex: Int) {
-        guard NSApp.currentEvent?.modifierFlags.contains(.command) == true else { return }
-        if let url = link as? URL {
-            NSWorkspace.shared.open(url)
-        } else if let str = link as? String, let url = URL(string: str) {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
     private func deleteColumnRanges() {
         undoManager?.beginUndoGrouping()
         for range in columnRanges.sorted(by: { $0.location > $1.location }) {
@@ -536,26 +525,10 @@ private final class SimpleSyntaxHighlighter {
 
         if text.count <= maxHighlightedCharacters {
             highlight(language: language, text: text, storage: storage)
-            detectLinks(text: text, storage: storage)
         }
 
         storage.endEditing()
         textView.typingAttributes = defaultAttributes
-    }
-
-    private func detectLinks(text: String, storage: NSTextStorage) {
-        guard let detector = try? NSDataDetector(
-            types: NSTextCheckingResult.CheckingType.link.rawValue
-        ) else { return }
-        let range = NSRange(location: 0, length: (text as NSString).length)
-        for match in detector.matches(in: text, options: [], range: range) {
-            guard let url = match.url else { continue }
-            storage.addAttributes([
-                .link: url,
-                .foregroundColor: NSColor.linkColor,
-                .underlineStyle: NSUnderlineStyle.single.rawValue
-            ], range: match.range)
-        }
     }
 
     private func highlight(language: EditorLanguage, text: String, storage: NSTextStorage) {

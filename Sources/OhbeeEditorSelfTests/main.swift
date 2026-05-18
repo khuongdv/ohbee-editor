@@ -638,7 +638,7 @@ func testSessionTextForDirtyFileBackedOverCap() throws {
         isScratch: false, isDirty: true,
         createdAt: Date(), updatedAt: Date()
     )
-    try expect(LargeFilePolicy.sessionText(for: doc) == "", "Dirty file-backed doc over cap should not persist text.")
+    try expect(LargeFilePolicy.sessionText(for: doc) == bigText, "Dirty file-backed doc over cap should preserve text for sidecar persistence.")
 }
 
 func testSessionTextForScratchWithinCap() throws {
@@ -652,7 +652,7 @@ func testSessionTextForScratchOverCap() throws {
     let bigText = String(repeating: "x", count: LargeFilePolicy.sessionTextCap + 1)
     var doc = EditorDocument.scratch(index: 1)
     doc.text = bigText
-    try expect(LargeFilePolicy.sessionText(for: doc) == "", "Scratch doc over cap should not persist text.")
+    try expect(LargeFilePolicy.sessionText(for: doc) == bigText, "Scratch doc over cap should preserve text for sidecar persistence.")
 }
 
 func testShouldPreserveDirtyStateFileBacked() throws {
@@ -671,7 +671,7 @@ func testShouldPreserveDirtyStateFileBacked() throws {
         isScratch: false, isDirty: true,
         createdAt: Date(), updatedAt: Date()
     )
-    try expect(!LargeFilePolicy.shouldPreserveDirtyState(for: largeDirtyDoc), "Large dirty file-backed doc cannot preserve dirty state.")
+    try expect(LargeFilePolicy.shouldPreserveDirtyState(for: largeDirtyDoc), "Large dirty file-backed doc should preserve dirty state through sidecar persistence.")
 }
 
 func testFileSizeSessionRoundTrip() throws {
@@ -703,6 +703,33 @@ func testFileSizeSessionRoundTrip() throws {
 
     try expect(loaded?.documents.first?.text == "", "Saved session should not contain text for clean file-backed document.")
     try expect(loaded?.documents.last?.text == "scratch notes", "Saved session should preserve scratch document text.")
+}
+
+func testLargeSessionTextSidecarRoundTrip() throws {
+    let directoryURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+    let fileURL = directoryURL.appendingPathComponent("session.json")
+    let store = LocalSessionStore(fileURL: fileURL)
+
+    let bigText = String(repeating: "x", count: LargeFilePolicy.sessionTextCap + 1)
+    var scratchDoc = EditorDocument.scratch(index: 1)
+    scratchDoc.text = bigText
+    scratchDoc.isDirty = true
+
+    let session = EditorSession(
+        selectedDocumentID: scratchDoc.id,
+        documents: [scratchDoc]
+    )
+
+    try store.saveSession(session)
+    let sessionData = try Data(contentsOf: fileURL)
+    try expect(sessionData.count < LargeFilePolicy.sessionTextCap, "Large scratch text should be kept out of the session JSON.")
+
+    let loaded = try store.loadSession()
+    try expect(loaded?.documents.first?.text == bigText, "Large scratch text should restore from local sidecar storage.")
+    try expect(loaded?.documents.first?.sessionTextFileName == nil, "Loaded documents should expose hydrated text, not sidecar internals.")
+
+    try? FileManager.default.removeItem(at: directoryURL)
 }
 
 // MARK: - XML tools tests
@@ -839,11 +866,12 @@ let tests: [(String, () throws -> Void)] = [
     ("file size policy classification", testFileSizePolicyClassification),
     ("session text: clean file-backed omits text", testSessionTextForCleanFileBacked),
     ("session text: dirty file-backed within cap persists", testSessionTextForDirtyFileBackedWithinCap),
-    ("session text: dirty file-backed over cap omits text", testSessionTextForDirtyFileBackedOverCap),
+    ("session text: dirty file-backed over cap preserves text", testSessionTextForDirtyFileBackedOverCap),
     ("session text: scratch within cap persists", testSessionTextForScratchWithinCap),
-    ("session text: scratch over cap omits text", testSessionTextForScratchOverCap),
+    ("session text: scratch over cap preserves text", testSessionTextForScratchOverCap),
     ("session dirty state preservation", testShouldPreserveDirtyStateFileBacked),
     ("session round-trip strips file-backed text", testFileSizeSessionRoundTrip),
+    ("large session text sidecar round-trip", testLargeSessionTextSidecarRoundTrip),
     ("isLargeFile not persisted in session", testIsLargeFileNotPersistedInSession),
     ("save and load session", testSaveAndLoadSession),
     ("missing session returns nil", testMissingSessionReturnsNil),

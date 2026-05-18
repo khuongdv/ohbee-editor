@@ -733,14 +733,12 @@ public final class EditorStore: ObservableObject {
 
     /// Returns a copy of the document with text stripped where it is safe to omit from the session.
     /// Clean file-backed documents store no text; the file on disk is the source of truth.
-    /// Scratch and dirty file-backed documents store text up to LargeFilePolicy.sessionTextCap.
+    /// Scratch and dirty file-backed documents preserve their text. LocalSessionStore keeps
+    /// large buffers in local sidecar files so the session JSON stays lightweight.
     private func sessionDocumentRecord(from document: EditorDocument) -> EditorDocument {
         var record = document
         record.text = LargeFilePolicy.sessionText(for: document)
-        if record.text.isEmpty && document.isDirty && document.fileURL != nil {
-            // Dirty text was too large to persist; restore will load the last saved file.
-            record.isDirty = false
-        }
+        record.sessionTextFileName = nil
         return record
     }
 

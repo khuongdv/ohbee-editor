@@ -10,6 +10,7 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
     public var createdAt: Date
     public var updatedAt: Date
     public var language: EditorLanguage?
+    public var sessionTextFileName: String?
 
     /// Set to true when the file on disk exceeds LargeFilePolicy.normalByteLimit.
     /// Not persisted in the session. Defaults to false on decode.
@@ -26,7 +27,7 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, text, fileURL, isScratch, isDirty, createdAt, updatedAt, language
+        case id, title, text, fileURL, isScratch, isDirty, createdAt, updatedAt, language, sessionTextFileName
     }
 
     public init(
@@ -39,6 +40,7 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
         createdAt: Date,
         updatedAt: Date,
         language: EditorLanguage? = nil,
+        sessionTextFileName: String? = nil,
         isLargeFile: Bool = false,
         isReadOnly: Bool = false
     ) {
@@ -51,6 +53,7 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.language = language
+        self.sessionTextFileName = sessionTextFileName
         self.isLargeFile = isLargeFile
         self.isReadOnly = isReadOnly
     }
@@ -84,6 +87,7 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
         lhs.isDirty == rhs.isDirty &&
         lhs.createdAt == rhs.createdAt &&
         lhs.updatedAt == rhs.updatedAt &&
-        lhs.language == rhs.language
+        lhs.language == rhs.language &&
+        lhs.sessionTextFileName == rhs.sessionTextFileName
     }
 }

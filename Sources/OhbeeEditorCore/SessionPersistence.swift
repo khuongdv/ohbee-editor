@@ -29,11 +29,15 @@ public protocol SessionPersisting {
 
 public final class LocalSessionStore: SessionPersisting {
     private let fileURL: URL
+    private let sidecarDirectoryURL: URL
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
     public init(fileURL: URL = LocalSessionStore.defaultFileURL()) {
         self.fileURL = fileURL
+        self.sidecarDirectoryURL = fileURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("Session Text", isDirectory: true)
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -51,12 +55,13 @@ public final class LocalSessionStore: SessionPersisting {
         }
 
         let data = try Data(contentsOf: fileURL)
-        let session = try decoder.decode(EditorSession.self, from: data)
+        var session = try decoder.decode(EditorSession.self, from: data)
 
         guard session.version == EditorSession.currentVersion else {
             throw SessionPersistenceError.unsupportedVersion(session.version)
         }
 
+        hydrateSidecarText(in: &session)
         return session
     }
 
@@ -67,8 +72,79 @@ public final class LocalSessionStore: SessionPersisting {
             withIntermediateDirectories: true
         )
 
-        let data = try encoder.encode(session)
+        let sessionToWrite = try sessionExternalizingLargeText(session)
+        let data = try encoder.encode(sessionToWrite)
         try data.write(to: fileURL, options: [.atomic])
+    }
+
+    private func sessionExternalizingLargeText(_ session: EditorSession) throws -> EditorSession {
+        var sessionToWrite = session
+        var activeSidecars = Set<String>()
+
+        for index in sessionToWrite.documents.indices {
+            sessionToWrite.documents[index].sessionTextFileName = nil
+            guard shouldExternalizeText(sessionToWrite.documents[index]) else {
+                continue
+            }
+
+            try FileManager.default.createDirectory(
+                at: sidecarDirectoryURL,
+                withIntermediateDirectories: true
+            )
+
+            let fileName = "\(sessionToWrite.documents[index].id.uuidString).txt"
+            let textURL = sidecarDirectoryURL.appendingPathComponent(fileName, isDirectory: false)
+            try sessionToWrite.documents[index].text.write(
+                to: textURL,
+                atomically: true,
+                encoding: .utf8
+            )
+            sessionToWrite.documents[index].text = ""
+            sessionToWrite.documents[index].sessionTextFileName = fileName
+            activeSidecars.insert(fileName)
+        }
+
+        cleanupUnusedSidecars(keeping: activeSidecars)
+        return sessionToWrite
+    }
+
+    private func shouldExternalizeText(_ document: EditorDocument) -> Bool {
+        guard document.text.utf8.count > LargeFilePolicy.sessionTextCap else {
+            return false
+        }
+
+        return document.fileURL == nil || document.isDirty
+    }
+
+    private func hydrateSidecarText(in session: inout EditorSession) {
+        for index in session.documents.indices {
+            guard let fileName = session.documents[index].sessionTextFileName else {
+                continue
+            }
+
+            let textURL = sidecarDirectoryURL.appendingPathComponent(fileName, isDirectory: false)
+            guard let text = try? String(contentsOf: textURL, encoding: .utf8) else {
+                continue
+            }
+
+            session.documents[index].text = text
+            session.documents[index].sessionTextFileName = nil
+        }
+    }
+
+    private func cleanupUnusedSidecars(keeping activeSidecars: Set<String>) {
+        guard
+            let sidecars = try? FileManager.default.contentsOfDirectory(
+                at: sidecarDirectoryURL,
+                includingPropertiesForKeys: nil
+            )
+        else {
+            return
+        }
+
+        for sidecar in sidecars where !activeSidecars.contains(sidecar.lastPathComponent) {
+            try? FileManager.default.removeItem(at: sidecar)
+        }
     }
 
     public static func defaultFileURL() -> URL {

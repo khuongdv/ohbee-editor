@@ -34,7 +34,7 @@ struct AboutOhbeeView: View {
                 HStack(spacing: 5) {
                     Text("© \(String(currentYear)) by Ohbee Labs")
                     Text("·")
-                    Link("https://ohbee.link", destination: URL(string: "https://ohbee.link")!)
+                    Text("ohbee.link")
                 }
                 .font(.footnote)
                 .foregroundStyle(.secondary)

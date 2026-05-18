@@ -46,12 +46,6 @@ struct OhbeeEditorApp: App {
                 Button("About Ohbee Editor") {
                     isAboutVisible = true
                 }
-                Divider()
-                Button("Check for Updates…") {
-                    if let url = URL(string: "https://ohbee.link") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
             }
 
             CommandGroup(replacing: .newItem) {

@@ -13,8 +13,8 @@ public enum LargeFilePolicy {
     public static let warningByteLimit = 50 * 1_048_576    // 50 MB
     public static let maximumByteLimit = 100 * 1_048_576   // 100 MB
 
-    /// Maximum UTF-8 bytes of document text persisted in the session file.
-    /// Applies to scratch documents and dirty file-backed documents.
+    /// Maximum UTF-8 bytes of document text stored inline in the session JSON.
+    /// Larger scratch and dirty file-backed buffers are stored as local sidecar files.
     public static let sessionTextCap = normalByteLimit
 
     public static func classify(byteCount: Int) -> FileSizeCategory {
@@ -24,24 +24,22 @@ public enum LargeFilePolicy {
         return .tooLarge
     }
 
-    /// Returns the text that should be written to the session file for a given document.
+    /// Returns the text that should be preserved for a given document.
     /// Clean file-backed documents store no text (re-read from disk on restore).
-    /// Dirty or scratch documents store text up to sessionTextCap; larger content is dropped.
+    /// Dirty or scratch documents preserve their full text; LocalSessionStore decides
+    /// whether to keep that text inline or spill it to a local sidecar file.
     public static func sessionText(for document: EditorDocument) -> String {
         if document.fileURL != nil {
             if !document.isDirty {
                 return ""
             }
-            return document.text.utf8.count <= sessionTextCap ? document.text : ""
+            return document.text
         }
-        return document.text.utf8.count <= sessionTextCap ? document.text : ""
+        return document.text
     }
 
-    /// Returns false when a dirty file-backed document's text was too large to persist,
-    /// meaning the dirty flag should be cleared in the session record so the file is
-    /// reloaded from disk (last saved version) on restore.
+    /// Dirty state is preserved because large unsaved buffers spill to local sidecar files.
     public static func shouldPreserveDirtyState(for document: EditorDocument) -> Bool {
-        guard document.fileURL != nil, document.isDirty else { return true }
-        return document.text.utf8.count <= sessionTextCap
+        true
     }
 }
