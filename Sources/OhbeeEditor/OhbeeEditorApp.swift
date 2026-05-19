@@ -9,12 +9,17 @@ struct OhbeeEditorApp: App {
     @State private var isAboutVisible = false
     @State private var isHelpVisible = false
     @State private var isCompareVisible = false
+    @State private var isSafeShareReviewVisible = false
     @AppStorage("ohbee.lineNumbers") private var showLineNumbers = true
     @AppStorage("ohbee.fontSize") private var fontSize: Double = 13
 
     var body: some Scene {
         WindowGroup {
-            ContentView(store: store, isSearchVisible: $isSearchVisible)
+            ContentView(
+                store: store,
+                isSearchVisible: $isSearchVisible,
+                isSafeShareReviewVisible: $isSafeShareReviewVisible
+            )
                 .frame(minWidth: 760, minHeight: 520)
                 .navigationTitle(store.windowTitle)
                 .sheet(isPresented: $isAboutVisible) {
@@ -240,8 +245,11 @@ struct OhbeeEditorApp: App {
 
                 Divider()
 
-                Button("Detect Sensitive Text") { detectSensitiveText() }
+                Button("Review Safe Share…") {
+                    isSafeShareReviewVisible = true
+                }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
+                Button("Detect Sensitive Text") { detectSensitiveText() }
                 Button("Mask Detected Patterns") { apply("Mask Detected Patterns", SafeShare.maskDetectedPatterns) }
 
                 Divider()

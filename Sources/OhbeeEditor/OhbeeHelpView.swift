@@ -33,14 +33,13 @@ struct OhbeeHelpView: View {
                         HelpRow("Format JSON",            shortcut: "⌘⇧J")
                         HelpRow("Minify JSON",            shortcut: "⌘⇧M")
                         HelpRow("Clean AI Output",        shortcut: "⌘⇧K")
-                        HelpRow("Detect Sensitive Text",  shortcut: "⌘⇧R")
+                        HelpRow("Review Safe Share",      shortcut: "⌘⇧R")
                         HelpRow("Duplicate Line",         shortcut: "⌘⇧D")
                         HelpRow("Move Line Up",           shortcut: "⌥↑")
                         HelpRow("Move Line Down",         shortcut: "⌥↓")
                         HelpRow("Increase Font Size",     shortcut: "⌘+")
                         HelpRow("Decrease Font Size",     shortcut: "⌘−")
                         HelpRow("Reset Font Size",        shortcut: "⌘0")
-                        HelpRow("Open Hyperlink",         shortcut: "⌘ Click")
                     }
 
                     HelpSection(title: "Gestures") {
@@ -54,8 +53,8 @@ struct OhbeeHelpView: View {
                             detail: "Strips surrounding Markdown code fences, collapses excess blank lines, trims trailing spaces, and normalizes line endings. Paste from ChatGPT or Claude, then run this."
                         )
                         HelpDetail(
-                            name: "Detect Sensitive Text  ⌘⇧R",
-                            detail: "Scans for API keys, tokens, emails, phone numbers, and .env-style secrets before you share. Detection is local and conservative — it flags likely candidates, not a guarantee."
+                            name: "Review Safe Share  ⌘⇧R",
+                            detail: "Reviews API keys, tokens, emails, phone numbers, and .env-style secrets before you share. Detection is local and conservative; it flags likely candidates, not a guarantee."
                         )
                         HelpDetail(
                             name: "Vertical Selection  ⌥ Drag",
@@ -69,7 +68,6 @@ struct OhbeeHelpView: View {
                         HelpTip("Change syntax highlighting via **View → Language**.")
                         HelpTip("Toggle line numbers via **View → Show Line Numbers**.")
                         HelpTip("Document stats (lines, words, characters) appear in the status bar **(i)** button.")
-                        HelpTip("URLs in the editor are underlined — **⌘ Click** to open in the browser.")
                         HelpTip("SHA-256 and MD5 hashes are available under the **Hash** status bar menu.")
                     }
                 }

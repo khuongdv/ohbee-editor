@@ -385,6 +385,23 @@ func testSafeShare() throws {
     try expect(!masked.contains("abc123456789secret"), "Safe Share masking should hide detected secret values.")
     try expect(!masked.contains("9L00152353252AFc2-014ACHA"), "Safe Share masking should hide detected JSON secret values.")
 
+    let review = SafeShare.review(in: text)
+    try expect(review.sourceText == text, "Safe Share review should preserve the original source text.")
+    try expect(review.hasFindings, "Safe Share review should report findings when sensitive-looking text exists.")
+    try expect(review.categorySummaries.contains { $0.category == "Email" && $0.count == 1 }, "Safe Share review should summarize email findings.")
+    try expect(review.categorySummaries.contains { $0.category == "JSON secret" && $0.count == 1 }, "Safe Share review should summarize JSON secret findings.")
+    try expect(review.maskedText == masked, "Safe Share review masked preview should match the masking transform.")
+    try expect(!review.maskedText.contains("dev@example.com"), "Safe Share review preview should hide detected email text.")
+
+    if let emailFinding = review.findings.first(where: { $0.category == "Email" }) {
+        try expect(
+            SafeShare.maskedSnippet(for: emailFinding).contains("***"),
+            "Safe Share review snippets should show masked text."
+        )
+    } else {
+        throw SelfTestError.failed("Safe Share review should include an email finding.")
+    }
+
     try expect(
         SafeShare.detect(in: "Meet me at 10:30 for lunch. Nothing secret here.").isEmpty,
         "Safe Share should avoid obvious normal-text false positives."
@@ -394,6 +411,10 @@ func testSafeShare() throws {
         SafeShare.detect(in: #"{"APIKey": "short"}"#).isEmpty,
         "Safe Share should avoid short JSON API-key-looking placeholders."
     )
+
+    let emptyReview = SafeShare.review(in: "Meet me at 10:30 for lunch. Nothing secret here.")
+    try expect(!emptyReview.hasFindings, "Safe Share review should handle no-finding text.")
+    try expect(emptyReview.maskedText == emptyReview.sourceText, "Safe Share review should leave no-finding text unchanged.")
 }
 
 func sqlTokens(_ text: String, kind: SQLTokenKind? = nil) -> [SQLSyntaxToken] {

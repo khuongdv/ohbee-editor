@@ -6,6 +6,35 @@ public struct SafeShareFinding: Equatable {
     public let text: String
 }
 
+public struct SafeShareCategorySummary: Equatable, Identifiable {
+    public var id: String { category }
+
+    public let category: String
+    public let count: Int
+}
+
+public struct SafeShareReview: Equatable {
+    public let sourceText: String
+    public let findings: [SafeShareFinding]
+    public let maskedText: String
+
+    public var hasFindings: Bool {
+        !findings.isEmpty
+    }
+
+    public var categorySummaries: [SafeShareCategorySummary] {
+        Dictionary(grouping: findings, by: \.category)
+            .map { SafeShareCategorySummary(category: $0.key, count: $0.value.count) }
+            .sorted { first, second in
+                if first.count == second.count {
+                    return first.category < second.category
+                }
+
+                return first.count > second.count
+            }
+    }
+}
+
 public enum SafeShare {
     private struct Detector {
         let category: String
@@ -49,12 +78,7 @@ public enum SafeShare {
             return .success(text: text, summary: "No potential sensitive text found.")
         }
 
-        let source = text as NSString
-        var masked = text
-        for finding in findings.reversed() {
-            let replacement = mask(for: source.substring(with: finding.range))
-            masked = (masked as NSString).replacingCharacters(in: finding.range, with: replacement)
-        }
+        let masked = maskedText(for: text, findings: findings)
 
         let summary = findings.count == 1
             ? "Masked 1 potential sensitive item."
@@ -70,6 +94,30 @@ public enum SafeShare {
 
         let categories = Set(findings.map(\.category)).sorted().joined(separator: ", ")
         return "Potential sensitive text found: \(findings.count) item(s). \(categories)."
+    }
+
+    public static func review(in text: String) -> SafeShareReview {
+        let findings = nonOverlappingFindings(in: text)
+        return SafeShareReview(
+            sourceText: text,
+            findings: findings,
+            maskedText: maskedText(for: text, findings: findings)
+        )
+    }
+
+    public static func maskedSnippet(for finding: SafeShareFinding, context: Int = 18) -> String {
+        let masked = mask(for: finding.text)
+        guard context > 0 else {
+            return masked
+        }
+
+        let prefix = finding.text.prefix(context)
+        let suffix = finding.text.suffix(context)
+        if finding.text.count <= context * 2 {
+            return masked
+        }
+
+        return "\(prefix)...\(suffix) → \(masked)"
     }
 
     private static func findings(for detector: Detector, in text: String) -> [SafeShareFinding] {
@@ -94,6 +142,17 @@ public enum SafeShare {
         }
 
         return result
+    }
+
+    private static func maskedText(for text: String, findings: [SafeShareFinding]) -> String {
+        let source = text as NSString
+        var masked = text
+        for finding in findings.reversed() {
+            let replacement = mask(for: source.substring(with: finding.range))
+            masked = (masked as NSString).replacingCharacters(in: finding.range, with: replacement)
+        }
+
+        return masked
     }
 
     private static func mask(for text: String) -> String {

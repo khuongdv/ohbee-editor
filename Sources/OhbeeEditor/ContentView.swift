@@ -6,11 +6,13 @@ import OhbeeEditorCore
 struct ContentView: View {
     @ObservedObject var store: EditorStore
     @Binding var isSearchVisible: Bool
+    @Binding var isSafeShareReviewVisible: Bool
     @Environment(\.colorScheme) private var colorScheme
     @State private var showDocInfo = false
     @State private var showWordFrequency = false
     @State private var wordFrequencySnapshot: [WordFrequencyEntry] = []
     @State private var showCompare = false
+    @State private var safeShareReview: SafeShareReview?
     @State private var draggingDocumentID: EditorDocument.ID?
     @FocusState private var searchFieldFocused: Bool
 
@@ -32,6 +34,29 @@ struct ContentView: View {
             if visible {
                 searchFieldFocused = true
             }
+        }
+        .onChange(of: isSafeShareReviewVisible) { visible in
+            if visible {
+                prepareSafeShareReview()
+            }
+        }
+        .sheet(isPresented: $isSafeShareReviewVisible) {
+            SafeShareReviewView(
+                review: safeShareReview ?? SafeShare.review(in: ""),
+                onApplyMask: {
+                    if let review = safeShareReview {
+                        EditorTextOperationCenter.shared.applyReviewedText(
+                            review.maskedText,
+                            named: "Safe Share Mask",
+                            store: store
+                        )
+                    }
+                    isSafeShareReviewVisible = false
+                },
+                onCancel: {
+                    isSafeShareReviewVisible = false
+                }
+            )
         }
         .background(
             TabKeyboardShortcutView {
@@ -359,6 +384,9 @@ struct ContentView: View {
             .font(.caption)
 
             Menu("Safe Share") {
+                Button("Review Safe Share…") {
+                    presentSafeShareReview()
+                }
                 Button("Detect Sensitive Text") {
                     EditorTextOperationCenter.shared.inspectText(named: "Safe Share", store: store) { text in
                         let message = SafeShare.detectionSummary(in: text)
@@ -466,6 +494,15 @@ struct ContentView: View {
         DispatchQueue.main.async {
             EditorTextOperationCenter.shared.selectCurrentSearchMatch(store: store)
         }
+    }
+
+    private func presentSafeShareReview() {
+        isSafeShareReviewVisible = true
+    }
+
+    private func prepareSafeShareReview() {
+        let text = EditorTextOperationCenter.shared.operationText(store: store)
+        safeShareReview = SafeShare.review(in: text)
     }
 
     private func openFile() {

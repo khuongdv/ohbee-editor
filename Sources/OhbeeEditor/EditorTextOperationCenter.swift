@@ -71,6 +71,22 @@ final class EditorTextOperationCenter {
         store.reportOperationStatus("\(name): \(result.message)", tone: result.tone)
     }
 
+    func operationText(store: EditorStore) -> String {
+        guard let textView = activeTextView(for: store) else {
+            return store.selectedDocument?.text ?? ""
+        }
+
+        let source = textView.string as NSString
+        let targetRange = operationRange(in: textView, textLength: source.length)
+        return source.substring(with: targetRange)
+    }
+
+    func applyReviewedText(_ replacement: String, named name: String, store: EditorStore) {
+        applyTransform(named: name, store: store) { _ in
+            .success(text: replacement, summary: "Applied Safe Share mask.")
+        }
+    }
+
     func selectCurrentSearchMatch(store: EditorStore) {
         guard
             let textView = activeTextView(for: store),

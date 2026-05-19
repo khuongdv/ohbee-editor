@@ -1,7 +1,7 @@
 BINARY        = OhbeeEditor
 APP           = Ohbee\ Editor.app
 BUNDLE        = $(APP)/Contents
-VERSION       = 1.1.2
+VERSION       = 1.1.3
 LSREGISTER    = /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 DEVELOPER_ID ?= "Developer ID Application: Your Name (XXXXXXXXXX)"
 
