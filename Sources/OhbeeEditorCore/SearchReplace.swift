@@ -52,12 +52,20 @@ public enum SearchReplaceResult: Equatable {
 }
 
 public enum SearchReplaceEngine {
+    public static func matchRanges(in text: String, options: SearchOptions) -> [NSRange] {
+        ranges(in: text, options: options)
+    }
+
+    public static func matchRanges(in text: String, options: SearchOptions, range: NSRange) -> [NSRange] {
+        ranges(in: text, options: options, range: range)
+    }
+
     public static func matchRange(
         in text: String,
         options: SearchOptions,
         matchIndex: Int
     ) -> NSRange? {
-        let matches = matchRanges(in: text, options: options)
+        let matches = ranges(in: text, options: options)
         guard matches.indices.contains(matchIndex) else {
             return nil
         }
@@ -79,7 +87,7 @@ public enum SearchReplaceEngine {
             return SearchSummary(matchCount: 0, currentMatchIndex: nil, hasInvalidRegex: true)
         }
 
-        let matches = matchRanges(in: text, options: options)
+        let matches = ranges(in: text, options: options)
 
         guard !matches.isEmpty else {
             return SearchSummary(matchCount: 0, currentMatchIndex: nil)
@@ -94,7 +102,7 @@ public enum SearchReplaceEngine {
         options: SearchOptions,
         currentMatchIndex: Int?
     ) -> Int? {
-        let count = matchRanges(in: text, options: options).count
+        let count = ranges(in: text, options: options).count
         guard count > 0 else {
             return nil
         }
@@ -107,7 +115,7 @@ public enum SearchReplaceEngine {
         options: SearchOptions,
         currentMatchIndex: Int?
     ) -> Int? {
-        let count = matchRanges(in: text, options: options).count
+        let count = ranges(in: text, options: options).count
         guard count > 0 else {
             return nil
         }
@@ -121,7 +129,7 @@ public enum SearchReplaceEngine {
         options: SearchOptions,
         currentMatchIndex: Int?
     ) -> SearchReplaceResult {
-        let matches = matchRanges(in: text, options: options)
+        let matches = ranges(in: text, options: options)
         guard !matches.isEmpty else {
             return .success(text: text, replacementCount: 0)
         }
@@ -171,7 +179,7 @@ public enum SearchReplaceEngine {
             }
         }
 
-        let matches = matchRanges(in: text, options: options)
+        let matches = ranges(in: text, options: options)
         guard !matches.isEmpty else {
             return .success(text: text, replacementCount: 0)
         }
@@ -184,25 +192,36 @@ public enum SearchReplaceEngine {
         return .success(text: result as String, replacementCount: matches.count)
     }
 
-    private static func matchRanges(in text: String, options: SearchOptions) -> [NSRange] {
+    private static func ranges(in text: String, options: SearchOptions) -> [NSRange] {
+        let source = text as NSString
+        return ranges(in: text, options: options, range: NSRange(location: 0, length: source.length))
+    }
+
+    private static func ranges(in text: String, options: SearchOptions, range: NSRange) -> [NSRange] {
         guard !options.query.isEmpty else {
+            return []
+        }
+
+        let source = text as NSString
+        let boundedRange = NSIntersectionRange(
+            range,
+            NSRange(location: 0, length: source.length)
+        )
+        guard boundedRange.length > 0 else {
             return []
         }
 
         if options.usesRegex || options.isWholeWord {
             do {
                 let regex = try regularExpression(for: options)
-                let range = NSRange(location: 0, length: (text as NSString).length)
-                return regex.matches(in: text, range: range).map(\.range)
+                return regex.matches(in: text, range: boundedRange).map(\.range)
             } catch {
                 return []
             }
         }
 
-        let source = text as NSString
-        let range = NSRange(location: 0, length: source.length)
         var ranges: [NSRange] = []
-        var searchRange = range
+        var searchRange = boundedRange
         let compareOptions: NSString.CompareOptions = options.isCaseSensitive ? [] : [.caseInsensitive]
 
         while searchRange.length > 0 {
@@ -213,9 +232,13 @@ public enum SearchReplaceEngine {
 
             ranges.append(foundRange)
             let nextLocation = foundRange.location + max(foundRange.length, 1)
+            let boundedEnd = NSMaxRange(boundedRange)
+            guard nextLocation < boundedEnd else {
+                break
+            }
             searchRange = NSRange(
                 location: nextLocation,
-                length: source.length - nextLocation
+                length: boundedEnd - nextLocation
             )
         }
 

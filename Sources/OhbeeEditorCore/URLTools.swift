@@ -29,10 +29,9 @@ public enum URLTools {
     }
 
     public static func removeTrackingParameters(_ text: String) -> TextTransformResult {
-        let lines = normalizedLines(text)
         var removedCount = 0
-        let cleanedLines = lines.map { line -> String in
-            let cleaned = cleanURLString(line)
+        let cleanedText = replaceURLMatches(in: text) { urlText in
+            let cleaned = cleanURLString(urlText)
             removedCount += cleaned.removedCount
             return cleaned.text
         }
@@ -41,7 +40,7 @@ public enum URLTools {
             ? "Removed 1 tracking parameter."
             : "Removed \(removedCount) tracking parameters."
 
-        return .success(text: cleanedLines.joined(separator: "\n"), summary: summary)
+        return .success(text: cleanedText, summary: summary)
     }
 
     private static func cleanURLString(_ text: String) -> (text: String, removedCount: Int) {
@@ -65,11 +64,26 @@ public enum URLTools {
         return (components.string ?? text, removedCount)
     }
 
-    private static func normalizedLines(_ text: String) -> [String] {
-        text
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-            .components(separatedBy: "\n")
+    private static func replaceURLMatches(in text: String, transform: (String) -> String) -> String {
+        let pattern = #"https?://[^\s<>"']+"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return text
+        }
+
+        let source = text as NSString
+        let matches = regex.matches(in: text, range: NSRange(location: 0, length: source.length))
+        guard !matches.isEmpty else {
+            return transform(text)
+        }
+
+        var result = text
+        for match in matches.reversed() {
+            let original = source.substring(with: match.range)
+            let cleaned = transform(original)
+            result = (result as NSString).replacingCharacters(in: match.range, with: cleaned)
+        }
+
+        return result
     }
 
     private static var urlComponentAllowedCharacters: CharacterSet {

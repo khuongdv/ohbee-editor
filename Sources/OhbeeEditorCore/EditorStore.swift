@@ -22,15 +22,19 @@ public final class EditorStore: ObservableObject {
 
     private let sessionStore: SessionPersisting
     private let fileIO: EditorFileIO
+    private let sessionSaveDebounceInterval: TimeInterval
+    private var pendingSessionSave: DispatchWorkItem?
 
     public init(
         documents: [EditorDocument]? = nil,
         selectedDocumentID: EditorDocument.ID? = nil,
         sessionStore: SessionPersisting = LocalSessionStore(),
-        fileIO: EditorFileIO = EditorFileIO()
+        fileIO: EditorFileIO = EditorFileIO(),
+        sessionSaveDebounceInterval: TimeInterval = 0.5
     ) {
         self.sessionStore = sessionStore
         self.fileIO = fileIO
+        self.sessionSaveDebounceInterval = sessionSaveDebounceInterval
 
         let paths = UserDefaults.standard.stringArray(forKey: Self.recentFilesKey) ?? []
         self.recentFiles = paths.compactMap { URL(fileURLWithPath: $0) }
@@ -55,6 +59,10 @@ public final class EditorStore: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             self?.reloadFileBackedDocumentsIfNeeded()
         }
+    }
+
+    deinit {
+        flushPendingSessionSave()
     }
 
     public var selectedDocument: EditorDocument? {
@@ -281,7 +289,7 @@ public final class EditorStore: ObservableObject {
         document.updatedAt = Date()
         documents[index] = document
         refreshCurrentMatch()
-        saveSession()
+        scheduleSessionSave()
     }
 
     /// Opens a file asynchronously. A placeholder tab appears immediately while the
@@ -488,7 +496,7 @@ public final class EditorStore: ObservableObject {
             documents[index] = document
             refreshCurrentMatch()
             setStatus(summary)
-            saveSession()
+            scheduleSessionSave()
         case let .failure(message):
             setStatus("\(name): \(message)", tone: .warning)
         }
@@ -709,6 +717,16 @@ public final class EditorStore: ObservableObject {
         setStatus(replacementCount == 1
             ? "Replaced 1 match."
             : "Replaced \(replacementCount) matches.")
+        scheduleSessionSave()
+    }
+
+    public func flushPendingSessionSave() {
+        guard pendingSessionSave != nil else {
+            return
+        }
+
+        pendingSessionSave?.cancel()
+        pendingSessionSave = nil
         saveSession()
     }
 
@@ -718,6 +736,9 @@ public final class EditorStore: ObservableObject {
     }
 
     private func saveSession() {
+        pendingSessionSave?.cancel()
+        pendingSessionSave = nil
+
         let docsToSave = documents.map { sessionDocumentRecord(from: $0) }
         let session = EditorSession(
             selectedDocumentID: selectedDocumentID,
@@ -729,6 +750,17 @@ public final class EditorStore: ObservableObject {
         } catch {
             setStatus("Could not save session: \(error.localizedDescription)", tone: .warning)
         }
+    }
+
+    private func scheduleSessionSave() {
+        pendingSessionSave?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.pendingSessionSave = nil
+            self?.saveSession()
+        }
+        pendingSessionSave = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + sessionSaveDebounceInterval, execute: workItem)
     }
 
     /// Returns a copy of the document with text stripped where it is safe to omit from the session.

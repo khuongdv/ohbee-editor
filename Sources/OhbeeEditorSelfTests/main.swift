@@ -26,6 +26,18 @@ final class NoopSessionStore: SessionPersisting {
     func saveSession(_ session: EditorSession) throws {}
 }
 
+final class CountingSessionStore: SessionPersisting {
+    private(set) var saveCount = 0
+
+    func loadSession() throws -> EditorSession? {
+        nil
+    }
+
+    func saveSession(_ session: EditorSession) throws {
+        saveCount += 1
+    }
+}
+
 func testSaveAndLoadSession() throws {
     let fileURL = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString)
@@ -114,6 +126,24 @@ func testLineTransforms() throws {
     )
 }
 
+func testLineEndingPreservation() throws {
+    try expect(
+        BasicTextTransforms.trimTrailingWhitespace("one  \r\ntwo\t\r\n") == .success(
+            text: "one\r\ntwo\r\n",
+            summary: "Trimmed trailing whitespace on 2 lines."
+        ),
+        "Trailing whitespace transform should preserve dominant CRLF endings."
+    )
+
+    try expect(
+        BasicTextTransforms.removeEmptyLines("one\r\n\r\ntwo") == .success(
+            text: "one\r\ntwo",
+            summary: "Removed empty 1 line."
+        ),
+        "Remove empty lines should preserve dominant CRLF endings."
+    )
+}
+
 func testCaseTransforms() throws {
     try expect(
         BasicTextTransforms.snakeCase("Xin chao Ohbee") == .success(
@@ -168,6 +198,26 @@ func testSearchSummaryAndNavigation() throws {
     try expect(
         SearchReplaceEngine.previousMatchIndex(in: text, options: options, currentMatchIndex: 0) == 1,
         "Previous match should wrap."
+    )
+
+    let visibleOnlyRanges = SearchReplaceEngine.matchRanges(
+        in: "xin before\nmiddle\nxin visible\nxin after",
+        options: options,
+        range: NSRange(location: 12, length: 17)
+    )
+    try expect(
+        visibleOnlyRanges == [NSRange(location: 18, length: 3)],
+        "Search range matching should only return matches inside the requested text range."
+    )
+
+    let regexRanges = SearchReplaceEngine.matchRanges(
+        in: "id=100\nid=200\nid=300",
+        options: SearchOptions(query: #"id=\d+"#, usesRegex: true, isCaseSensitive: true),
+        range: NSRange(location: 7, length: 6)
+    )
+    try expect(
+        regexRanges == [NSRange(location: 7, length: 6)],
+        "Regex range matching should respect the requested text range."
     )
 }
 
@@ -362,6 +412,14 @@ func testURLTools() throws {
         ),
         "Tracking cleanup should remove only known tracking parameters."
     )
+
+    try expect(
+        URLTools.removeTrackingParameters("Share this: https://ohbee.link/page?utm_source=x&keep=1 and keep reading.") == .success(
+            text: "Share this: https://ohbee.link/page?keep=1 and keep reading.",
+            summary: "Removed 1 tracking parameter."
+        ),
+        "Tracking cleanup should clean embedded URLs in prose."
+    )
 }
 
 func testSafeShare() throws {
@@ -393,6 +451,14 @@ func testSafeShare() throws {
     try expect(review.maskedText == masked, "Safe Share review masked preview should match the masking transform.")
     try expect(!review.maskedText.contains("dev@example.com"), "Safe Share review preview should hide detected email text.")
 
+    if let emailIndex = review.findings.firstIndex(where: { $0.category == "Email" }) {
+        let selectedMasked = review.maskedText(includingFindingIndexes: Set([emailIndex]))
+        try expect(!selectedMasked.contains("dev@example.com"), "Selected Safe Share masking should mask selected findings.")
+        try expect(selectedMasked.contains("abc123456789secret"), "Selected Safe Share masking should leave unselected findings alone.")
+    } else {
+        throw SelfTestError.failed("Safe Share review should include an email finding for selected masking.")
+    }
+
     if let emailFinding = review.findings.first(where: { $0.category == "Email" }) {
         try expect(
             SafeShare.maskedSnippet(for: emailFinding).contains("***"),
@@ -412,9 +478,34 @@ func testSafeShare() throws {
         "Safe Share should avoid short JSON API-key-looking placeholders."
     )
 
+    try expect(
+        SafeShare.detect(in: "Order ID 12345678 and invoice total 123.45 are ordinary support text.").isEmpty,
+        "Safe Share should avoid obvious support-text numeric false positives."
+    )
+
     let emptyReview = SafeShare.review(in: "Meet me at 10:30 for lunch. Nothing secret here.")
     try expect(!emptyReview.hasFindings, "Safe Share review should handle no-finding text.")
     try expect(emptyReview.maskedText == emptyReview.sourceText, "Safe Share review should leave no-finding text unchanged.")
+}
+
+func testDebouncedSessionSaveFlushesOnce() throws {
+    let document = EditorDocument.scratch(index: 1)
+    let sessionStore = CountingSessionStore()
+    let store = EditorStore(
+        documents: [document],
+        selectedDocumentID: document.id,
+        sessionStore: sessionStore,
+        sessionSaveDebounceInterval: 60
+    )
+
+    let binding = store.textBinding(for: document.id)
+    binding.wrappedValue = "one"
+    binding.wrappedValue = "two"
+    binding.wrappedValue = "three"
+
+    try expect(sessionStore.saveCount == 0, "Text edits should schedule session save instead of writing immediately.")
+    store.flushPendingSessionSave()
+    try expect(sessionStore.saveCount == 1, "Flushing pending session save should write one coalesced session.")
 }
 
 func sqlTokens(_ text: String, kind: SQLTokenKind? = nil) -> [SQLSyntaxToken] {
@@ -899,6 +990,7 @@ let tests: [(String, () throws -> Void)] = [
     ("trim trailing whitespace", testTrimTrailingWhitespace),
     ("trim trailing whitespace handles empty input", testTrimTrailingWhitespaceHandlesEmptyInput),
     ("line transforms", testLineTransforms),
+    ("line ending preservation", testLineEndingPreservation),
     ("case transforms", testCaseTransforms),
     ("clean AI output", testCleanAIOutput),
     ("search summary and navigation", testSearchSummaryAndNavigation),
@@ -911,6 +1003,7 @@ let tests: [(String, () throws -> Void)] = [
     ("JSON tools", testJSONTools),
     ("URL tools", testURLTools),
     ("Safe Share", testSafeShare),
+    ("debounced session save flushes once", testDebouncedSessionSaveFlushesOnce),
     ("SQL basic keywords", testSQLBasicKeywords),
     ("SQL case-insensitive keywords", testSQLCaseInsensitiveKeywords),
     ("SQL data types", testSQLDataTypes),

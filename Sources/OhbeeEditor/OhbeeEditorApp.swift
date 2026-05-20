@@ -10,6 +10,7 @@ struct OhbeeEditorApp: App {
     @State private var isHelpVisible = false
     @State private var isCompareVisible = false
     @State private var isSafeShareReviewVisible = false
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("ohbee.lineNumbers") private var showLineNumbers = true
     @AppStorage("ohbee.fontSize") private var fontSize: Double = 13
 
@@ -43,6 +44,11 @@ struct OhbeeEditorApp: App {
                     }
 
                     store.openDocument(from: url)
+                }
+                .onChange(of: scenePhase) { phase in
+                    if phase != .active {
+                        store.flushPendingSessionSave()
+                    }
                 }
         }
         .windowStyle(.titleBar)
@@ -330,20 +336,23 @@ struct OhbeeEditorApp: App {
             return
         }
 
-        guard UnsavedTabWarning.confirmClosing([document]) else {
+        switch UnsavedTabWarning.closeDecision(for: [document]) {
+        case .closeWithoutSaving:
+            store.closeDocument(selectedDocumentID)
+        case .saveThenClose:
+            if save() {
+                store.closeDocument(selectedDocumentID)
+            }
+        case .cancel:
             return
         }
-
-        store.closeDocument(selectedDocumentID)
     }
 
     private func closeOtherTabsWithWarning(keeping id: EditorDocument.ID) {
         let closingDocuments = store.documents.filter { $0.id != id }
-        guard UnsavedTabWarning.confirmClosing(closingDocuments) else {
-            return
+        closeDocumentsWithWarning(closingDocuments) {
+            store.closeOtherDocuments(keeping: id)
         }
-
-        store.closeOtherDocuments(keeping: id)
     }
 
     private func closeTabsToRightWithWarning(of id: EditorDocument.ID) {
@@ -352,19 +361,36 @@ struct OhbeeEditorApp: App {
         }
 
         let closingDocuments = Array(store.documents.suffix(from: index + 1))
-        guard UnsavedTabWarning.confirmClosing(closingDocuments) else {
-            return
+        closeDocumentsWithWarning(closingDocuments) {
+            store.closeDocumentsToRight(of: id)
         }
-
-        store.closeDocumentsToRight(of: id)
     }
 
     private func closeAllTabsWithWarning() {
-        guard UnsavedTabWarning.confirmClosing(store.documents) else {
+        closeDocumentsWithWarning(store.documents) {
+            store.closeAllDocuments()
+        }
+    }
+
+    private func closeDocumentsWithWarning(_ documents: [EditorDocument], close: () -> Void) {
+        switch UnsavedTabWarning.closeDecision(for: documents) {
+        case .closeWithoutSaving:
+            close()
+        case .saveThenClose:
+            guard
+                let dirtyDocument = documents.first(where: \.isDirty),
+                documents.filter(\.isDirty).count == 1
+            else {
+                return
+            }
+
+            store.selectDocument(dirtyDocument.id)
+            if save() {
+                close()
+            }
+        case .cancel:
             return
         }
-
-        store.closeAllDocuments()
     }
 
     private func openFile() {
@@ -380,22 +406,28 @@ struct OhbeeEditorApp: App {
         }
     }
 
-    private func save() {
-        if !store.saveSelectedDocument() {
-            saveAs()
+    @discardableResult
+    private func save() -> Bool {
+        if store.saveSelectedDocument() {
+            return true
         }
+
+        return saveAs()
     }
 
-    private func saveAs() {
+    @discardableResult
+    private func saveAs() -> Bool {
         guard let document = store.selectedDocument else {
-            return
+            return false
         }
 
         let panel = NSSavePanel()
         panel.nameFieldStringValue = document.title
 
         if panel.runModal() == .OK, let fileURL = panel.url {
-            _ = store.saveSelectedDocument(to: fileURL)
+            return store.saveSelectedDocument(to: fileURL)
         }
+
+        return false
     }
 }

@@ -10,6 +10,8 @@ struct HighlightedTextEditor: NSViewRepresentable {
     var isLargeFile: Bool = false
     var isReadOnly: Bool = false
     var fontSize: CGFloat = NSFont.systemFontSize
+    var searchOptions = SearchOptions()
+    var currentSearchMatchIndex: Int?
     var onFileDrop: (([URL]) -> Void)? = nil
 
     /// Line numbers are disabled for large files to prevent per-keystroke full scans.
@@ -65,6 +67,8 @@ struct HighlightedTextEditor: NSViewRepresentable {
         context.coordinator.language = language
         context.coordinator.isLargeFile = isLargeFile
         context.coordinator.fontSize = fontSize
+        context.coordinator.searchOptions = searchOptions
+        context.coordinator.currentSearchMatchIndex = currentSearchMatchIndex
         context.coordinator.applyHighlighting(to: textView)
         EditorTextOperationCenter.shared.register(textView: textView, documentID: documentID)
         textView.onFileDrop = onFileDrop
@@ -99,10 +103,14 @@ struct HighlightedTextEditor: NSViewRepresentable {
         let documentChanged = context.coordinator.documentID != documentID
         let languageChanged = context.coordinator.language != language
         let fontSizeChanged = context.coordinator.fontSize != fontSize
+        let searchChanged = context.coordinator.searchOptions != searchOptions
+            || context.coordinator.currentSearchMatchIndex != currentSearchMatchIndex
         context.coordinator.documentID = documentID
         context.coordinator.language = language
         context.coordinator.isLargeFile = isLargeFile
         context.coordinator.fontSize = fontSize
+        context.coordinator.searchOptions = searchOptions
+        context.coordinator.currentSearchMatchIndex = currentSearchMatchIndex
         EditorTextOperationCenter.shared.register(textView: textView, documentID: documentID)
         textView.isEditable = !isReadOnly
         textView.insertionPointColor = isReadOnly ? .clear : .controlAccentColor
@@ -136,7 +144,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
                 : validRanges
             context.coordinator.isApplyingExternalText = false
             context.coordinator.applyHighlighting(to: textView)
-        } else if languageChanged {
+        } else if languageChanged || searchChanged {
             context.coordinator.applyHighlighting(to: textView)
         }
 
@@ -162,6 +170,8 @@ struct HighlightedTextEditor: NSViewRepresentable {
         var isApplyingExternalText = false
         var isLargeFile: Bool = false
         var fontSize: CGFloat = NSFont.systemFontSize
+        var searchOptions = SearchOptions()
+        var currentSearchMatchIndex: Int?
 
         private let highlighter = SimpleSyntaxHighlighter()
         private var pendingHighlight: DispatchWorkItem?
@@ -185,9 +195,11 @@ struct HighlightedTextEditor: NSViewRepresentable {
             guard !isLargeFile else {
                 let font = textView.font ?? .monospacedSystemFont(ofSize: fontSize, weight: .regular)
                 textView.typingAttributes = [.font: font, .foregroundColor: NSColor.textColor]
+                applySearchHighlights(to: textView)
                 return
             }
-            highlighter.apply(language: language, to: textView)
+            highlighter.apply(language: language, to: textView, visibleOnlyWhenLarge: true)
+            applySearchHighlights(to: textView)
         }
 
         func scheduleHighlighting(to textView: NSTextView) {
@@ -203,7 +215,8 @@ struct HighlightedTextEditor: NSViewRepresentable {
                     return
                 }
 
-                self.highlighter.apply(language: self.language, to: textView)
+                self.highlighter.apply(language: self.language, to: textView, visibleOnlyWhenLarge: true)
+                self.applySearchHighlights(to: textView)
             }
 
             pendingHighlight = workItem
@@ -214,6 +227,85 @@ struct HighlightedTextEditor: NSViewRepresentable {
             pendingHighlight?.cancel()
             pendingHighlight = nil
         }
+
+        private func applySearchHighlights(to textView: NSTextView) {
+            guard let storage = textView.textStorage else { return }
+
+            let source = textView.string as NSString
+            let fullRange = NSRange(location: 0, length: source.length)
+            let shouldLimitSearchHighlights = isLargeFile || source.length > 300_000
+            let limitedRange = shouldLimitSearchHighlights ? textView.visibleCharacterRangeWithContext() : fullRange
+            storage.removeAttribute(.backgroundColor, range: limitedRange)
+
+            guard !isLargeFile, !searchOptions.query.isEmpty else { return }
+
+            let ranges = SearchReplaceEngine.matchRanges(
+                in: textView.string,
+                options: searchOptions,
+                range: limitedRange
+            )
+            let maxBackgroundMatches = shouldLimitSearchHighlights ? 600 : 2_000
+            for range in ranges.prefix(maxBackgroundMatches) {
+                storage.addAttribute(
+                    .backgroundColor,
+                    value: NSColor.systemYellow.withAlphaComponent(0.22),
+                    range: range
+                )
+            }
+
+            if let currentRange = currentVisibleSearchRange(in: textView, visibleRange: limitedRange) {
+                storage.addAttribute(
+                    .backgroundColor,
+                    value: NSColor.systemYellow.withAlphaComponent(0.55),
+                    range: currentRange
+                )
+            }
+        }
+
+        private func currentVisibleSearchRange(in textView: NSTextView, visibleRange: NSRange) -> NSRange? {
+            let selectedRange = textView.selectedRange()
+            guard
+                selectedRange.length > 0,
+                NSIntersectionRange(selectedRange, visibleRange).length > 0
+            else {
+                return nil
+            }
+
+            let source = textView.string as NSString
+            guard NSMaxRange(selectedRange) <= source.length else {
+                return nil
+            }
+
+            let selectedText = source.substring(with: selectedRange)
+            return SearchReplaceEngine.matchRanges(
+                in: selectedText,
+                options: searchOptions
+            ).contains { localRange in
+                localRange.location == 0 && localRange.length == selectedRange.length
+            } ? selectedRange : nil
+        }
+    }
+}
+
+private extension NSTextView {
+    func visibleCharacterRangeWithContext() -> NSRange {
+        let source = string as NSString
+        guard
+            let layoutManager,
+            let textContainer,
+            let scrollView = enclosingScrollView
+        else {
+            return NSRange(location: 0, length: source.length)
+        }
+
+        let visibleRect = scrollView.contentView.bounds.insetBy(dx: 0, dy: -240)
+        let glyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: textContainer)
+        var characterRange = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+        characterRange = source.lineRange(for: characterRange)
+
+        let start = max(0, min(characterRange.location, source.length))
+        let end = max(start, min(NSMaxRange(characterRange), source.length))
+        return NSRange(location: start, length: end - start)
     }
 }
 
@@ -506,8 +598,9 @@ final class SmartIndentingTextView: NSTextView {
 
 private final class SimpleSyntaxHighlighter {
     private let maxHighlightedCharacters = 300_000
+    private let visibleOnlyThreshold = 80_000
 
-    func apply(language: EditorLanguage, to textView: NSTextView) {
+    func apply(language: EditorLanguage, to textView: NSTextView, visibleOnlyWhenLarge: Bool = false) {
         guard let storage = textView.textStorage else {
             return
         }
@@ -519,6 +612,29 @@ private final class SimpleSyntaxHighlighter {
             .font: font,
             .foregroundColor: NSColor.textColor
         ]
+
+        if visibleOnlyWhenLarge && text.count > visibleOnlyThreshold {
+            let visibleRange = textView.visibleCharacterRangeWithContext()
+            storage.beginEditing()
+            storage.setAttributes(defaultAttributes, range: visibleRange)
+            if visibleRange.length <= maxHighlightedCharacters {
+                let visibleText = (text as NSString).substring(with: visibleRange)
+                let partialStorage = NSTextStorage(string: visibleText, attributes: defaultAttributes)
+                highlight(language: language, text: visibleText, storage: partialStorage)
+                partialStorage.enumerateAttributes(
+                    in: NSRange(location: 0, length: partialStorage.length)
+                ) { attributes, range, _ in
+                    let shiftedRange = NSRange(
+                        location: visibleRange.location + range.location,
+                        length: range.length
+                    )
+                    storage.setAttributes(attributes, range: shiftedRange)
+                }
+            }
+            storage.endEditing()
+            textView.typingAttributes = defaultAttributes
+            return
+        }
 
         storage.beginEditing()
         storage.setAttributes(defaultAttributes, range: fullRange)

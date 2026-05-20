@@ -4,9 +4,10 @@ import OhbeeEditorCore
 
 struct SafeShareReviewView: View {
     let review: SafeShareReview
-    let onApplyMask: () -> Void
+    let onApplyMask: (String) -> Void
     let onCancel: () -> Void
 
+    @State private var selectedFindingIndexes: Set<Int> = []
     @State private var copiedMaskedText = false
     @State private var copyFeedbackID = UUID()
 
@@ -30,18 +31,21 @@ struct SafeShareReviewView: View {
                 Button("Copy Masked") {
                     copyMaskedText()
                 }
-                .disabled(!review.hasFindings)
+                .disabled(selectedFindingIndexes.isEmpty)
 
                 Button("Apply Mask") {
-                    onApplyMask()
+                    onApplyMask(currentMaskedText)
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(!review.hasFindings)
+                .disabled(selectedFindingIndexes.isEmpty)
             }
         }
         .padding(20)
         .frame(width: 620)
         .frame(minHeight: 360)
+        .onAppear {
+            selectedFindingIndexes = Set(review.findings.indices)
+        }
     }
 
     private var header: some View {
@@ -55,7 +59,7 @@ struct SafeShareReviewView: View {
             }
 
             Text(review.hasFindings
-                ? "\(review.findings.count) item(s) found in the current selection or document."
+                ? "\(review.findings.count) item(s) found in the current selection or document. \(selectedFindingIndexes.count) selected for masking."
                 : "Safe Share is best-effort and conservative; it does not guarantee complete secret detection.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -85,8 +89,12 @@ struct SafeShareReviewView: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(review.findings.enumerated()), id: \.offset) { _, finding in
+                    ForEach(Array(review.findings.enumerated()), id: \.offset) { index, finding in
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Toggle("", isOn: bindingForFinding(at: index))
+                                .labelsHidden()
+                                .toggleStyle(.checkbox)
+
                             Text(finding.category)
                                 .font(.caption)
                                 .fontWeight(.medium)
@@ -124,7 +132,7 @@ struct SafeShareReviewView: View {
             }
 
             ScrollView {
-                Text(review.maskedText.isEmpty ? " " : review.maskedText)
+                Text(currentMaskedText.isEmpty ? " " : currentMaskedText)
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -152,7 +160,7 @@ struct SafeShareReviewView: View {
     private func copyMaskedText() {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(review.maskedText, forType: .string)
+        pasteboard.setString(currentMaskedText, forType: .string)
 
         let feedbackID = UUID()
         copyFeedbackID = feedbackID
@@ -165,5 +173,22 @@ struct SafeShareReviewView: View {
 
             copiedMaskedText = false
         }
+    }
+
+    private var currentMaskedText: String {
+        review.maskedText(includingFindingIndexes: selectedFindingIndexes)
+    }
+
+    private func bindingForFinding(at index: Int) -> Binding<Bool> {
+        Binding(
+            get: { selectedFindingIndexes.contains(index) },
+            set: { isSelected in
+                if isSelected {
+                    selectedFindingIndexes.insert(index)
+                } else {
+                    selectedFindingIndexes.remove(index)
+                }
+            }
+        )
     }
 }

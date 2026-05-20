@@ -43,10 +43,10 @@ struct ContentView: View {
         .sheet(isPresented: $isSafeShareReviewVisible) {
             SafeShareReviewView(
                 review: safeShareReview ?? SafeShare.review(in: ""),
-                onApplyMask: {
-                    if let review = safeShareReview {
+                onApplyMask: { maskedText in
+                    if safeShareReview != nil {
                         EditorTextOperationCenter.shared.applyReviewedText(
-                            review.maskedText,
+                            maskedText,
                             named: "Safe Share Mask",
                             store: store
                         )
@@ -282,6 +282,9 @@ struct ContentView: View {
                 ScratchEditorView(
                     document: document,
                     text: store.textBinding(for: document.id),
+                    searchOptions: store.searchOptions,
+                    currentSearchMatchIndex: store.currentMatchIndex,
+                    onSaveAs: saveAs,
                     onFileDrop: { urls in
                         for url in urls {
                             store.openDocument(from: url)
@@ -518,23 +521,29 @@ struct ContentView: View {
         }
     }
 
-    private func save() {
-        if !store.saveSelectedDocument() {
-            saveAs()
+    @discardableResult
+    private func save() -> Bool {
+        if store.saveSelectedDocument() {
+            return true
         }
+
+        return saveAs()
     }
 
-    private func saveAs() {
+    @discardableResult
+    private func saveAs() -> Bool {
         guard let document = store.selectedDocument else {
-            return
+            return false
         }
 
         let panel = NSSavePanel()
         panel.nameFieldStringValue = document.title
 
         if panel.runModal() == .OK, let fileURL = panel.url {
-            _ = store.saveSelectedDocument(to: fileURL)
+            return store.saveSelectedDocument(to: fileURL)
         }
+
+        return false
     }
 
     private func hasTabsToRight(of id: EditorDocument.ID) -> Bool {
@@ -558,20 +567,24 @@ struct ContentView: View {
             return
         }
 
-        guard UnsavedTabWarning.confirmClosing([document]) else {
+        switch UnsavedTabWarning.closeDecision(for: [document]) {
+        case .closeWithoutSaving:
+            store.closeDocument(id)
+        case .saveThenClose:
+            store.selectDocument(id)
+            if save() {
+                store.closeDocument(id)
+            }
+        case .cancel:
             return
         }
-
-        store.closeDocument(id)
     }
 
     private func closeOtherTabsWithWarning(keeping id: EditorDocument.ID) {
         let closingDocuments = store.documents.filter { $0.id != id }
-        guard UnsavedTabWarning.confirmClosing(closingDocuments) else {
-            return
+        closeDocumentsWithWarning(closingDocuments) {
+            store.closeOtherDocuments(keeping: id)
         }
-
-        store.closeOtherDocuments(keeping: id)
     }
 
     private func closeTabsToRightWithWarning(of id: EditorDocument.ID) {
@@ -580,25 +593,45 @@ struct ContentView: View {
         }
 
         let closingDocuments = Array(store.documents.suffix(from: index + 1))
-        guard UnsavedTabWarning.confirmClosing(closingDocuments) else {
-            return
+        closeDocumentsWithWarning(closingDocuments) {
+            store.closeDocumentsToRight(of: id)
         }
-
-        store.closeDocumentsToRight(of: id)
     }
 
     private func closeAllTabsWithWarning() {
-        guard UnsavedTabWarning.confirmClosing(store.documents) else {
+        closeDocumentsWithWarning(store.documents) {
+            store.closeAllDocuments()
+        }
+    }
+
+    private func closeDocumentsWithWarning(_ documents: [EditorDocument], close: () -> Void) {
+        switch UnsavedTabWarning.closeDecision(for: documents) {
+        case .closeWithoutSaving:
+            close()
+        case .saveThenClose:
+            guard
+                let dirtyDocument = documents.first(where: \.isDirty),
+                documents.filter(\.isDirty).count == 1
+            else {
+                return
+            }
+
+            store.selectDocument(dirtyDocument.id)
+            if save() {
+                close()
+            }
+        case .cancel:
             return
         }
-
-        store.closeAllDocuments()
     }
 }
 
 private struct ScratchEditorView: View {
     let document: EditorDocument
     @Binding var text: String
+    let searchOptions: SearchOptions
+    let currentSearchMatchIndex: Int?
+    let onSaveAs: () -> Bool
     let onFileDrop: ([URL]) -> Void
     @AppStorage("ohbee.lineNumbers") private var showLineNumbers = true
     @AppStorage("ohbee.fontSize") private var fontSize: Double = 13
@@ -616,10 +649,16 @@ private struct ScratchEditorView: View {
                 }
 
                 if document.isReadOnly {
-                    Image(systemName: "lock.fill")
+                    Label("Read-only", systemImage: "lock.fill")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .help("Read-only file")
+                        .foregroundStyle(.orange)
+                        .help("This file cannot be overwritten. Use Save As to write a copy.")
+
+                    Button("Save As") {
+                        _ = onSaveAs()
+                    }
+                    .controlSize(.small)
+                    .help("Save this read-only file as a writable copy")
                 }
 
                 Text(document.effectiveLanguage.displayName)
@@ -641,6 +680,8 @@ private struct ScratchEditorView: View {
                 isLargeFile: document.isLargeFile,
                 isReadOnly: document.isReadOnly,
                 fontSize: CGFloat(fontSize),
+                searchOptions: searchOptions,
+                currentSearchMatchIndex: currentSearchMatchIndex,
                 onFileDrop: onFileDrop
             )
                 .background(Color(nsColor: .textBackgroundColor))

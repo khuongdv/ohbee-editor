@@ -7,17 +7,19 @@ public enum TextTransformResult: Equatable {
 
 public enum BasicTextTransforms {
     public static func trimWhitespace(_ text: String) -> TextTransformResult {
+        let lineEnding = LineEnding.preferred(in: text)
         let lines = splitLines(text)
         let trimmedLines = lines.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         let changedLineCount = zip(lines, trimmedLines).filter { $0 != $1 }.count
 
         return .success(
-            text: trimmedLines.joined(separator: "\n"),
+            text: trimmedLines.joined(separator: lineEnding.rawValue),
             summary: lineSummary("Trimmed whitespace", count: changedLineCount)
         )
     }
 
     public static func trimTrailingWhitespace(_ text: String) -> TextTransformResult {
+        let lineEnding = LineEnding.preferred(in: text)
         let lines = splitLines(text)
         let trimmedLines = lines.map { line in
             line.replacingOccurrences(
@@ -32,21 +34,23 @@ public enum BasicTextTransforms {
             ? "Trimmed trailing whitespace on 1 line."
             : "Trimmed trailing whitespace on \(changedLineCount) lines."
 
-        return .success(text: trimmedLines.joined(separator: "\n"), summary: summary)
+        return .success(text: trimmedLines.joined(separator: lineEnding.rawValue), summary: summary)
     }
 
     public static func removeEmptyLines(_ text: String) -> TextTransformResult {
+        let lineEnding = LineEnding.preferred(in: text)
         let lines = splitLines(text)
         let keptLines = lines.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         let removedCount = lines.count - keptLines.count
 
         return .success(
-            text: keptLines.joined(separator: "\n"),
+            text: keptLines.joined(separator: lineEnding.rawValue),
             summary: lineSummary("Removed empty", count: removedCount)
         )
     }
 
     public static func removeDuplicateLines(_ text: String) -> TextTransformResult {
+        let lineEnding = LineEnding.preferred(in: text)
         var seen = Set<String>()
         let lines = splitLines(text)
         let keptLines = lines.filter { line in
@@ -59,25 +63,27 @@ public enum BasicTextTransforms {
         }
 
         return .success(
-            text: keptLines.joined(separator: "\n"),
+            text: keptLines.joined(separator: lineEnding.rawValue),
             summary: lineSummary("Removed duplicate", count: lines.count - keptLines.count)
         )
     }
 
     public static func sortLines(_ text: String) -> TextTransformResult {
+        let lineEnding = LineEnding.preferred(in: text)
         let lines = splitLines(text)
 
         return .success(
-            text: lines.sorted { $0.localizedStandardCompare($1) == .orderedAscending }.joined(separator: "\n"),
+            text: lines.sorted { $0.localizedStandardCompare($1) == .orderedAscending }.joined(separator: lineEnding.rawValue),
             summary: lineSummary("Sorted", count: lines.count)
         )
     }
 
     public static func sortLinesDescending(_ text: String) -> TextTransformResult {
+        let lineEnding = LineEnding.preferred(in: text)
         let lines = splitLines(text)
 
         return .success(
-            text: lines.sorted { $0.localizedStandardCompare($1) == .orderedDescending }.joined(separator: "\n"),
+            text: lines.sorted { $0.localizedStandardCompare($1) == .orderedDescending }.joined(separator: lineEnding.rawValue),
             summary: lineSummary("Sorted descending", count: lines.count)
         )
     }
@@ -167,6 +173,29 @@ public enum BasicTextTransforms {
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
             .components(separatedBy: "\n")
+    }
+
+    private enum LineEnding: String {
+        case lf = "\n"
+        case crlf = "\r\n"
+        case cr = "\r"
+
+        static func preferred(in text: String) -> LineEnding {
+            let crlfCount = text.components(separatedBy: "\r\n").count - 1
+            let withoutCRLF = text.replacingOccurrences(of: "\r\n", with: "")
+            let lfCount = withoutCRLF.components(separatedBy: "\n").count - 1
+            let crCount = withoutCRLF.components(separatedBy: "\r").count - 1
+
+            if crlfCount >= lfCount && crlfCount >= crCount && crlfCount > 0 {
+                return .crlf
+            }
+
+            if crCount > lfCount {
+                return .cr
+            }
+
+            return .lf
+        }
     }
 
     private static func lineSummary(_ verb: String, count: Int) -> String {

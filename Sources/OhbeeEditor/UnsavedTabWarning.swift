@@ -2,10 +2,20 @@ import AppKit
 import OhbeeEditorCore
 
 enum UnsavedTabWarning {
+    enum CloseDecision {
+        case closeWithoutSaving
+        case saveThenClose
+        case cancel
+    }
+
     static func confirmClosing(_ documents: [EditorDocument]) -> Bool {
+        closeDecision(for: documents) == .closeWithoutSaving
+    }
+
+    static func closeDecision(for documents: [EditorDocument]) -> CloseDecision {
         let dirtyDocuments = documents.filter(\.isDirty)
         guard !dirtyDocuments.isEmpty else {
-            return true
+            return .closeWithoutSaving
         }
 
         let alert = NSAlert()
@@ -14,10 +24,25 @@ enum UnsavedTabWarning {
             ? "This tab has unsaved changes."
             : "\(dirtyDocuments.count) tabs have unsaved changes."
         alert.informativeText = informativeText(for: dirtyDocuments)
+        if dirtyDocuments.count == 1 {
+            alert.addButton(withTitle: "Save")
+        }
         alert.addButton(withTitle: "Close Without Saving")
         alert.addButton(withTitle: "Cancel")
 
-        return alert.runModal() == .alertFirstButtonReturn
+        let response = alert.runModal()
+        if dirtyDocuments.count == 1 {
+            switch response {
+            case .alertFirstButtonReturn:
+                return .saveThenClose
+            case .alertSecondButtonReturn:
+                return .closeWithoutSaving
+            default:
+                return .cancel
+            }
+        }
+
+        return response == .alertFirstButtonReturn ? .closeWithoutSaving : .cancel
     }
 
     private static func informativeText(for documents: [EditorDocument]) -> String {

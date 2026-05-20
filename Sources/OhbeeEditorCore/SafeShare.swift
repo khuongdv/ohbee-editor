@@ -33,6 +33,13 @@ public struct SafeShareReview: Equatable {
                 return first.count > second.count
             }
     }
+
+    public func maskedText(includingFindingIndexes indexes: Set<Int>) -> String {
+        let selectedFindings = findings.enumerated().compactMap { index, finding in
+            indexes.contains(index) ? finding : nil
+        }
+        return SafeShare.maskedText(for: sourceText, findings: selectedFindings)
+    }
 }
 
 public enum SafeShare {
@@ -144,7 +151,7 @@ public enum SafeShare {
         return result
     }
 
-    private static func maskedText(for text: String, findings: [SafeShareFinding]) -> String {
+    public static func maskedText(for text: String, findings: [SafeShareFinding]) -> String {
         let source = text as NSString
         var masked = text
         for finding in findings.reversed() {
