@@ -233,6 +233,16 @@ func testSearchReplace() throws {
         SearchReplaceEngine.replaceAll(in: "Xin chao xin", options: options) == .success(text: "hello chao hello", replacementCount: 2),
         "Replace all should replace all literal matches."
     )
+
+    try expect(
+        SearchReplaceEngine.replaceAll(in: "Xin chao", options: SearchOptions(query: "", replacement: "hello")) == .failure(message: "Enter text to find."),
+        "Replace all should reject an empty search query instead of changing text."
+    )
+
+    try expect(
+        SearchReplaceEngine.replaceCurrent(in: "Xin chao", options: SearchOptions(query: "", replacement: "hello"), currentMatchIndex: nil) == .success(text: "Xin chao", replacementCount: 0),
+        "Replace current should leave text unchanged for an empty search query."
+    )
 }
 
 func testRegexReplace() throws {
@@ -241,6 +251,48 @@ func testRegexReplace() throws {
     try expect(
         SearchReplaceEngine.replaceAll(in: "a1 b22", options: options) == .success(text: "a# b#", replacementCount: 2),
         "Regex replace all should use NSRegularExpression templates."
+    )
+
+    let captureOptions = SearchOptions(query: #"(\w+)=(\d+)"#, replacement: "$1:#$2", usesRegex: true, isCaseSensitive: true)
+    try expect(
+        SearchReplaceEngine.replaceAll(in: "id=42", options: captureOptions) == .success(text: "id:#42", replacementCount: 1),
+        "Regex replace all should support capture templates."
+    )
+}
+
+func testSearchReplaceEdgeCases() throws {
+    let invalidRegex = SearchOptions(query: #"("#, replacement: "", usesRegex: true, isCaseSensitive: true)
+    try expect(
+        SearchReplaceEngine.summary(in: "abc", options: invalidRegex, currentMatchIndex: nil) == SearchSummary(matchCount: 0, currentMatchIndex: nil, hasInvalidRegex: true),
+        "Invalid regex search should report an invalid pattern."
+    )
+    try expect(
+        SearchReplaceEngine.replaceAll(in: "abc", options: invalidRegex) == .failure(message: "Invalid regular expression."),
+        "Invalid regex replace all should fail without mutating text."
+    )
+    try expect(
+        SearchReplaceEngine.matchRanges(in: "abc", options: invalidRegex).isEmpty,
+        "Invalid regex match lookup should return no ranges."
+    )
+
+    let wholeWord = SearchOptions(query: "cat", replacement: "dog", usesRegex: false, isCaseSensitive: false, isWholeWord: true)
+    try expect(
+        SearchReplaceEngine.matchRanges(in: "cat scatter cat-cat _cat cat1", options: wholeWord) == [
+            NSRange(location: 0, length: 3),
+            NSRange(location: 12, length: 3),
+            NSRange(location: 16, length: 3)
+        ],
+        "Whole-word search should skip embedded word characters and match punctuation boundaries."
+    )
+    try expect(
+        SearchReplaceEngine.replaceAll(in: "cat scatter cat-cat _cat cat1", options: wholeWord) == .success(text: "dog scatter dog-dog _cat cat1", replacementCount: 3),
+        "Whole-word replace should only replace whole-word matches."
+    )
+
+    let caseSensitive = SearchOptions(query: "xin", replacement: "hello", usesRegex: false, isCaseSensitive: true)
+    try expect(
+        SearchReplaceEngine.summary(in: "Xin xin XIN", options: caseSensitive, currentMatchIndex: nil) == SearchSummary(matchCount: 1, currentMatchIndex: 0),
+        "Case-sensitive search should only count exact-case matches."
     )
 }
 
@@ -996,6 +1048,7 @@ let tests: [(String, () throws -> Void)] = [
     ("search summary and navigation", testSearchSummaryAndNavigation),
     ("search replace", testSearchReplace),
     ("regex replace", testRegexReplace),
+    ("search replace edge cases", testSearchReplaceEdgeCases),
     ("close tab behaviors", testCloseTabBehaviors),
     ("close other tabs and language", testCloseOtherTabsAndLanguage),
     ("language inference and override", testLanguageInferenceAndOverride),

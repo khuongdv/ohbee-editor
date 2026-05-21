@@ -2,7 +2,7 @@
 
 A local-first text workbench for macOS. Clean, fast, no cloud, no AI writing assistant, no telemetry.
 
-Current release: **1.1.4**
+Current release: **1.1.5**
 
 > A text workbench — not a full IDE, not a note-taking app.
 

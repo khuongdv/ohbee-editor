@@ -9,6 +9,7 @@ struct SafeShareReviewView: View {
 
     @State private var selectedFindingIndexes: Set<Int> = []
     @State private var copiedMaskedText = false
+    @State private var copyStatusText = ""
     @State private var copyFeedbackID = UUID()
 
     var body: some View {
@@ -31,11 +32,13 @@ struct SafeShareReviewView: View {
                 Button("Copy Masked") {
                     copyMaskedText()
                 }
+                .help("Copies the masked preview to the pasteboard without changing the document.")
                 .disabled(selectedFindingIndexes.isEmpty)
 
                 Button("Apply Mask") {
                     onApplyMask(currentMaskedText)
                 }
+                .help("Replaces the reviewed text with the masked preview. This is undoable in the editor.")
                 .keyboardShortcut(.defaultAction)
                 .disabled(selectedFindingIndexes.isEmpty)
             }
@@ -125,11 +128,15 @@ struct SafeShareReviewView: View {
                     .fontWeight(.medium)
 
                 if copiedMaskedText {
-                    Text("Copied")
+                    Text(copyStatusText)
                         .font(.caption)
                         .foregroundStyle(.green)
                 }
             }
+
+            Text("Copy Masked uses the local pasteboard only and leaves the document unchanged.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             ScrollView {
                 Text(currentMaskedText.isEmpty ? " " : currentMaskedText)
@@ -164,6 +171,7 @@ struct SafeShareReviewView: View {
 
         let feedbackID = UUID()
         copyFeedbackID = feedbackID
+        copyStatusText = "Copied masked text. Document unchanged."
         copiedMaskedText = true
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
@@ -172,6 +180,7 @@ struct SafeShareReviewView: View {
             }
 
             copiedMaskedText = false
+            copyStatusText = ""
         }
     }
 
