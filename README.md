@@ -4,7 +4,7 @@ A local-first text workbench for macOS. Clean, fast, no cloud, no AI writing ass
 
 Current release: **1.1.5**
 
-> A text workbench — not a full IDE, not a note-taking app.
+> A text workbench - not a full IDE, not a note-taking app.
 
 ## Features
 
@@ -143,4 +143,4 @@ Support/
 
 ---
 
-© 2025 Ohbee Labs · [ohbee.link](https://ohbee.link)
+© 2026 Ohbee Labs · [ohbee.link](https://ohbee.link)
