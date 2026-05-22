@@ -15,7 +15,7 @@ struct OhbeeEditorApp: App {
     @AppStorage("ohbee.fontSize") private var fontSize: Double = 13
 
     var body: some Scene {
-        WindowGroup {
+        Window("Ohbee Editor", id: "main") {
             ContentView(
                 store: store,
                 isSearchVisible: $isSearchVisible,
