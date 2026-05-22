@@ -141,6 +141,13 @@ Support/
   Info.plist         — App bundle metadata and file type declarations
 ```
 
+## Open Source
+
+- License: [MIT](LICENSE)
+- Changes: [CHANGELOG.md](CHANGELOG.md)
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Security and privacy reports: [SECURITY.md](SECURITY.md)
+
 ---
 
 © 2026 Ohbee Labs · [ohbee.link](https://ohbee.link)
