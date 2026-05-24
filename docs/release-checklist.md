@@ -75,7 +75,7 @@ Use this before tagging a release. Keep the pass focused on local-first editor t
 - [ ] Move the cursor and confirm the gutter highlights the correct line.
 - [ ] Change font size with Cmd+=, Cmd+-, and Cmd+0.
 - [ ] Duplicate and move the current line, then undo.
-- [ ] Cmd+Click a URL and confirm it opens in the system browser.
+- [ ] Cmd+Click a URL and confirm the editor does not open the system browser.
 - [ ] Use Option+Drag vertical selection, copy, cut, delete, and Escape.
 - [ ] Compare two tabs and confirm a new diff note is created.
 - [ ] Open the Help sheet and confirm shortcuts match the app.

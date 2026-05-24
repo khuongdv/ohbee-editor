@@ -332,6 +332,107 @@ func testCloseOtherTabsAndLanguage() throws {
     try expect(store.selectedDocumentID == second.id, "Close other tabs should keep the requested tab selected.")
 }
 
+func testRecentlyClosedFilesStack() throws {
+    let now = Date()
+    let fileDocuments = (0..<12).map { index in
+        EditorDocument(
+            id: UUID(),
+            title: "file\(index).txt",
+            text: "",
+            fileURL: URL(fileURLWithPath: "/tmp/file\(index).txt"),
+            isScratch: false,
+            isDirty: false,
+            createdAt: now,
+            updatedAt: now
+        )
+    }
+    let scratch = EditorDocument.scratch(index: 1)
+    let store = EditorStore(
+        documents: fileDocuments + [scratch],
+        selectedDocumentID: scratch.id,
+        sessionStore: NoopSessionStore()
+    )
+
+    for document in fileDocuments {
+        store.closeDocument(document.id)
+    }
+
+    try expect(store.recentlyClosedFileURLs.count == 10, "Recently closed files should be capped at 10.")
+    try expect(
+        store.recentlyClosedFileURLs.first?.lastPathComponent == "file11.txt",
+        "Most recently closed file should be first in the reopen stack."
+    )
+    try expect(
+        !store.recentlyClosedFileURLs.contains(URL(fileURLWithPath: "/tmp/file0.txt")),
+        "Old closed files should fall off the capped reopen stack."
+    )
+    try expect(store.documents.contains { $0.id == scratch.id }, "Unsaved scratch tabs should remain separate from the closed-file stack.")
+}
+
+func testSaveAllDocuments() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+    let dirtyURL = directory.appendingPathComponent("dirty.txt")
+    let cleanURL = directory.appendingPathComponent("clean.txt")
+    let readOnlyURL = directory.appendingPathComponent("readonly.txt")
+    try "old".write(to: dirtyURL, atomically: true, encoding: .utf8)
+    try "clean".write(to: cleanURL, atomically: true, encoding: .utf8)
+    try "readonly".write(to: readOnlyURL, atomically: true, encoding: .utf8)
+
+    let now = Date()
+    let dirtyFile = EditorDocument(
+        id: UUID(),
+        title: "dirty.txt",
+        text: "new",
+        fileURL: dirtyURL,
+        isScratch: false,
+        isDirty: true,
+        createdAt: now,
+        updatedAt: now
+    )
+    let cleanFile = EditorDocument(
+        id: UUID(),
+        title: "clean.txt",
+        text: "clean",
+        fileURL: cleanURL,
+        isScratch: false,
+        isDirty: false,
+        createdAt: now,
+        updatedAt: now
+    )
+    let readOnlyFile = EditorDocument(
+        id: UUID(),
+        title: "readonly.txt",
+        text: "changed",
+        fileURL: readOnlyURL,
+        isScratch: false,
+        isDirty: true,
+        createdAt: now,
+        updatedAt: now,
+        isReadOnly: true
+    )
+    var scratch = EditorDocument.scratch(index: 1)
+    scratch.text = "draft"
+    scratch.isDirty = true
+
+    let store = EditorStore(
+        documents: [dirtyFile, cleanFile, readOnlyFile, scratch],
+        selectedDocumentID: dirtyFile.id,
+        sessionStore: NoopSessionStore()
+    )
+
+    let result = store.saveAllDocuments()
+    try expect(result.savedCount == 1, "Save All should save dirty writable file-backed tabs.")
+    try expect(result.skippedCleanCount == 1, "Save All should skip clean file-backed tabs.")
+    try expect(result.skippedReadOnlyCount == 1, "Save All should skip read-only file-backed tabs.")
+    try expect(result.skippedScratchCount == 1, "Save All should skip unsaved scratch tabs.")
+    let savedText = try String(contentsOf: dirtyURL)
+    try expect(savedText == "new", "Save All should write dirty file-backed text to disk.")
+    try expect(store.documents.first { $0.id == dirtyFile.id }?.isDirty == false, "Saved files should be marked clean.")
+    try expect(store.documents.first { $0.id == scratch.id }?.isDirty == true, "Unsaved scratch tabs should remain dirty.")
+}
+
 func testLanguageInferenceAndOverride() throws {
     let jsonURL = URL(fileURLWithPath: "/tmp/sample.json")
     let dataURL = URL(fileURLWithPath: "/tmp/sample.data")
@@ -500,6 +601,14 @@ func testSafeShare() throws {
     try expect(review.hasFindings, "Safe Share review should report findings when sensitive-looking text exists.")
     try expect(review.categorySummaries.contains { $0.category == "Email" && $0.count == 1 }, "Safe Share review should summarize email findings.")
     try expect(review.categorySummaries.contains { $0.category == "JSON secret" && $0.count == 1 }, "Safe Share review should summarize JSON secret findings.")
+    try expect(
+        review.copyableFindingsSummary.contains("Email"),
+        "Safe Share review should expose a copyable summary without secret values."
+    )
+    try expect(
+        !review.copyableFindingsSummary.contains("dev@example.com"),
+        "Safe Share review summary should not include sensitive values."
+    )
     try expect(review.maskedText == masked, "Safe Share review masked preview should match the masking transform.")
     try expect(!review.maskedText.contains("dev@example.com"), "Safe Share review preview should hide detected email text.")
 
@@ -1051,6 +1160,8 @@ let tests: [(String, () throws -> Void)] = [
     ("search replace edge cases", testSearchReplaceEdgeCases),
     ("close tab behaviors", testCloseTabBehaviors),
     ("close other tabs and language", testCloseOtherTabsAndLanguage),
+    ("recently closed files stack", testRecentlyClosedFilesStack),
+    ("save all documents", testSaveAllDocuments),
     ("language inference and override", testLanguageInferenceAndOverride),
     ("window title", testWindowTitle),
     ("JSON tools", testJSONTools),

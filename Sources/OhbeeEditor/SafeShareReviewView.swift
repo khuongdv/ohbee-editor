@@ -29,6 +29,12 @@ struct SafeShareReviewView: View {
 
                 Button("Cancel", action: onCancel)
 
+                Button("Copy Summary") {
+                    copySummary()
+                }
+                .help("Copies only category counts, not sensitive values.")
+                .disabled(!review.hasFindings)
+
                 Button("Copy Masked") {
                     copyMaskedText()
                 }
@@ -165,13 +171,25 @@ struct SafeShareReviewView: View {
     }
 
     private func copyMaskedText() {
+        copyToPasteboard(currentMaskedText)
+        showCopyFeedback("Copied masked text. Document unchanged.")
+    }
+
+    private func copySummary() {
+        copyToPasteboard(review.copyableFindingsSummary)
+        showCopyFeedback("Copied findings summary. No sensitive values copied.")
+    }
+
+    private func copyToPasteboard(_ text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(currentMaskedText, forType: .string)
+        pasteboard.setString(text, forType: .string)
+    }
 
+    private func showCopyFeedback(_ message: String) {
         let feedbackID = UUID()
         copyFeedbackID = feedbackID
-        copyStatusText = "Copied masked text. Document unchanged."
+        copyStatusText = message
         copiedMaskedText = true
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {

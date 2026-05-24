@@ -8,6 +8,20 @@ struct AboutOhbeeView: View {
         Calendar.current.component(.year, from: Date())
     }
 
+    private var versionText: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+
+        switch (version, build) {
+        case let (version?, build?):
+            return "Version \(version) (\(build))"
+        case let (version?, nil):
+            return "Version \(version)"
+        default:
+            return "Version unavailable"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 14) {
@@ -17,6 +31,9 @@ struct AboutOhbeeView: View {
                     Text("Ohbee Editor")
                         .font(.title2.weight(.semibold))
                     Text("A lightweight, local-first text workbench for macOS.")
+                        .foregroundStyle(.secondary)
+                    Text(versionText)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }

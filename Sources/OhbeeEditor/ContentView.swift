@@ -105,6 +105,20 @@ struct ContentView: View {
 
                     Divider()
 
+                    if let fileURL = document.fileURL {
+                        Button("Copy File Path") {
+                            copyToPasteboard(fileURL.path)
+                            store.reportOperationStatus("Copied file path.")
+                        }
+
+                        Button("Copy File Name") {
+                            copyToPasteboard(fileURL.lastPathComponent)
+                            store.reportOperationStatus("Copied file name.")
+                        }
+
+                        Divider()
+                    }
+
                     Button("Close All Tabs") {
                         closeAllTabsWithWarning()
                     }
@@ -506,6 +520,12 @@ struct ContentView: View {
     private func prepareSafeShareReview() {
         let text = EditorTextOperationCenter.shared.operationText(store: store)
         safeShareReview = SafeShare.review(in: text)
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
     }
 
     private func openFile() {

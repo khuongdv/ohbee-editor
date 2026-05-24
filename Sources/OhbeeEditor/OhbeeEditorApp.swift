@@ -73,6 +73,12 @@ struct OhbeeEditorApp: App {
                 }
                 .keyboardShortcut("w", modifiers: .command)
 
+                Button("Reopen Closed File") {
+                    store.reopenLastClosedFile()
+                }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+                .disabled(!store.canReopenClosedFile)
+
                 Button("Close Other Tabs") {
                     if let selectedDocumentID = store.selectedDocumentID {
                         closeOtherTabsWithWarning(keeping: selectedDocumentID)
@@ -101,6 +107,11 @@ struct OhbeeEditorApp: App {
                     saveAs()
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
+
+                Button("Save All") {
+                    saveAll()
+                }
+                .keyboardShortcut("s", modifiers: [.command, .option])
             }
 
             CommandGroup(replacing: .importExport) {
@@ -120,6 +131,11 @@ struct OhbeeEditorApp: App {
                                 store.openDocument(from: url)
                             }
                             .help(url.path)
+                            .disabled(!store.recentFileExists(url))
+                        }
+                        Divider()
+                        Button("Remove Missing Recent Files") {
+                            store.removeMissingRecentFiles()
                         }
                         Divider()
                         Button("Clear Recent Files") {
@@ -429,5 +445,9 @@ struct OhbeeEditorApp: App {
         }
 
         return false
+    }
+
+    private func saveAll() {
+        store.saveAllDocuments()
     }
 }

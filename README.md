@@ -2,7 +2,7 @@
 
 A local-first text workbench for macOS. Clean, fast, no cloud, no AI writing assistant, no telemetry.
 
-Current release: **1.1.5**
+Current release: **1.1.6**
 
 > A text workbench - not a full IDE, not a note-taking app.
 
@@ -18,6 +18,8 @@ Current release: **1.1.5**
 - **Large-file guardrails** — avoids expensive full-document highlighting, line-number scans, and search on large inputs
 - **Read-only files** — non-writable files open safely with a clear read-only label and one-click Save As
 - **Unsaved-change warnings** — single dirty-tab close flows can Save, Close Without Saving, or Cancel
+- **Reopen Closed File** — reopen up to 10 recently closed file-backed tabs with `⌘⇧T`
+- **Save All** — save all dirty file-backed tabs at once with `⌘⌥S`
 
 ### Syntax Highlighting
 Automatic detection from file extension, with manual override via the Language menu:
@@ -68,6 +70,7 @@ Before pasting content somewhere else, run a scan:
 - **Copy Masked** — copies the redacted preview without changing the document
 - **Apply Mask** — replaces sensitive values with `abcd***xyz` redactions in-place and remains undoable
 - **Detect Sensitive Text** — quick status-only scan for likely bearer tokens, JWTs, emails, phone numbers, `.env` secrets, API keys
+- **Copy Findings Summary** — copy category counts without copying the sensitive values themselves
 
 Safe Share is conservative and best-effort. It helps notice likely sensitive text; it does not guarantee complete secret detection.
 
@@ -118,7 +121,9 @@ After installing, Ohbee Editor appears as an option in **Get Info → Open With*
 | `⌘O` | Open file(s) |
 | `⌘S` | Save |
 | `⌘⇧S` | Save As |
+| `⌘⌥S` | Save All file-backed tabs |
 | `⌘W` | Close tab |
+| `⌘⇧T` | Reopen closed file |
 | `⌘F` | Find |
 | `⌘⌥F` | Find and Replace |
 | `⌘⇧J` | Format JSON |

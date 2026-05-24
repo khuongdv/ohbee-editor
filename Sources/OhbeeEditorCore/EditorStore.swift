@@ -7,10 +7,19 @@ public enum StatusMessageTone {
     case warning
 }
 
+public struct SaveAllResult: Equatable {
+    public let savedCount: Int
+    public let skippedScratchCount: Int
+    public let skippedCleanCount: Int
+    public let skippedReadOnlyCount: Int
+    public let failedCount: Int
+}
+
 public final class EditorStore: ObservableObject {
     public static let maxDocumentCount = 50
     private static let recentFilesKey = "ohbee.recentFiles"
     private static let maxRecentFiles = 10
+    private static let maxRecentlyClosedFiles = 10
 
     @Published public private(set) var documents: [EditorDocument]
     @Published public var selectedDocumentID: EditorDocument.ID?
@@ -19,6 +28,7 @@ public final class EditorStore: ObservableObject {
     @Published public var searchOptions = SearchOptions()
     @Published public private(set) var currentMatchIndex: Int?
     @Published public private(set) var recentFiles: [URL]
+    @Published public private(set) var recentlyClosedFileURLs: [URL] = []
 
     private let sessionStore: SessionPersisting
     private let fileIO: EditorFileIO
@@ -102,6 +112,10 @@ public final class EditorStore: ObservableObject {
     public var windowTitle: String {
         let documentTitle = selectedDocument.map(displayTitleForWindow) ?? "Untitled"
         return "Ohbee Editor - \(documentTitle)"
+    }
+
+    public var canReopenClosedFile: Bool {
+        !recentlyClosedFileURLs.isEmpty && documents.count < Self.maxDocumentCount
     }
 
     public func createScratchDocument() {
@@ -192,7 +206,9 @@ public final class EditorStore: ObservableObject {
             return
         }
 
-        let closedTitle = documents[index].title
+        let document = documents[index]
+        let closedTitle = document.title
+        recordClosedFileIfNeeded(document)
         documents.remove(at: index)
 
         if documents.isEmpty {
@@ -214,6 +230,7 @@ public final class EditorStore: ObservableObject {
             return
         }
 
+        recordClosedFilesIfNeeded(documents.filter { $0.id != id })
         let closedCount = max(documents.count - 1, 0)
         documents = [document]
         selectedDocumentID = document.id
@@ -233,6 +250,7 @@ public final class EditorStore: ObservableObject {
             return
         }
 
+        recordClosedFilesIfNeeded(Array(documents.suffix(from: index + 1)))
         documents.removeSubrange((index + 1)..<documents.count)
         selectedDocumentID = id
         refreshCurrentMatch()
@@ -242,12 +260,33 @@ public final class EditorStore: ObservableObject {
 
     public func closeAllDocuments() {
         let closedCount = documents.count
+        recordClosedFilesIfNeeded(documents)
         let document = EditorDocument.scratch(index: 1)
         documents = [document]
         selectedDocumentID = document.id
         currentMatchIndex = nil
         setStatus(closedCount == 1 ? "Closed 1 tab." : "Closed \(closedCount) tabs.")
         saveSession()
+    }
+
+    public func reopenLastClosedFile() {
+        guard canCreateScratchDocument else {
+            setStatus("Maximum \(Self.maxDocumentCount) tabs reached.", tone: .warning)
+            return
+        }
+
+        while let fileURL = recentlyClosedFileURLs.first {
+            recentlyClosedFileURLs.removeFirst()
+
+            guard FileManager.default.fileExists(atPath: fileURL.path) else {
+                continue
+            }
+
+            openDocument(from: fileURL)
+            return
+        }
+
+        setStatus("No recently closed files to reopen.", tone: .warning)
     }
 
     public func setSelectedLanguage(_ language: EditorLanguage) {
@@ -408,6 +447,26 @@ public final class EditorStore: ObservableObject {
         UserDefaults.standard.removeObject(forKey: Self.recentFilesKey)
     }
 
+    public func removeMissingRecentFiles() {
+        let originalCount = recentFiles.count
+        let existing = recentFiles.filter { FileManager.default.fileExists(atPath: $0.path) }
+        recentFiles = existing
+        UserDefaults.standard.set(existing.map(\.path), forKey: Self.recentFilesKey)
+
+        let removedCount = originalCount - existing.count
+        if removedCount == 0 {
+            setStatus("No missing recent files.")
+        } else {
+            setStatus(removedCount == 1
+                ? "Removed 1 missing recent file."
+                : "Removed \(removedCount) missing recent files.")
+        }
+    }
+
+    public func recentFileExists(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path)
+    }
+
     private func removeRecentFile(_ url: URL) {
         let updated = recentFiles.filter { $0 != url }
         recentFiles = updated
@@ -465,6 +524,55 @@ public final class EditorStore: ObservableObject {
             setStatus("Could not save file: \(error.localizedDescription)", tone: .warning)
             return false
         }
+    }
+
+    @discardableResult
+    public func saveAllDocuments() -> SaveAllResult {
+        var savedCount = 0
+        var skippedScratchCount = 0
+        var skippedCleanCount = 0
+        var skippedReadOnlyCount = 0
+        var failedCount = 0
+
+        for index in documents.indices {
+            guard documents[index].isDirty else {
+                skippedCleanCount += 1
+                continue
+            }
+
+            guard let fileURL = documents[index].fileURL else {
+                skippedScratchCount += 1
+                continue
+            }
+
+            guard !documents[index].isReadOnly else {
+                skippedReadOnlyCount += 1
+                continue
+            }
+
+            do {
+                try fileIO.save(documents[index], to: fileURL)
+                documents[index].isDirty = false
+                documents[index].updatedAt = Date()
+                savedCount += 1
+            } catch {
+                failedCount += 1
+            }
+        }
+
+        if savedCount > 0 {
+            saveSession()
+        }
+
+        let result = SaveAllResult(
+            savedCount: savedCount,
+            skippedScratchCount: skippedScratchCount,
+            skippedCleanCount: skippedCleanCount,
+            skippedReadOnlyCount: skippedReadOnlyCount,
+            failedCount: failedCount
+        )
+        setStatus(saveAllStatus(for: result), tone: result.failedCount > 0 ? .warning : .neutral)
+        return result
     }
 
     public func applyTransform(
@@ -666,6 +774,53 @@ public final class EditorStore: ObservableObject {
         }
 
         return compactPath(for: fileURL)
+    }
+
+    private func recordClosedFilesIfNeeded(_ documents: [EditorDocument]) {
+        for document in documents.reversed() {
+            recordClosedFileIfNeeded(document)
+        }
+    }
+
+    private func recordClosedFileIfNeeded(_ document: EditorDocument) {
+        guard let fileURL = document.fileURL else {
+            return
+        }
+
+        var updated = recentlyClosedFileURLs.filter { $0 != fileURL }
+        updated.insert(fileURL, at: 0)
+        if updated.count > Self.maxRecentlyClosedFiles {
+            updated = Array(updated.prefix(Self.maxRecentlyClosedFiles))
+        }
+        recentlyClosedFileURLs = updated
+    }
+
+    private func saveAllStatus(for result: SaveAllResult) -> String {
+        if result.savedCount == 0 && result.failedCount == 0 {
+            if result.skippedScratchCount > 0 {
+                return "No file-backed changes to save. Unsaved notes need Save As."
+            }
+            if result.skippedReadOnlyCount > 0 {
+                return "No writable file-backed changes to save."
+            }
+            return "No file-backed changes to save."
+        }
+
+        var parts: [String] = []
+        if result.savedCount > 0 {
+            parts.append(result.savedCount == 1 ? "Saved 1 file" : "Saved \(result.savedCount) files")
+        }
+        if result.skippedScratchCount > 0 {
+            parts.append(result.skippedScratchCount == 1 ? "skipped 1 unsaved note" : "skipped \(result.skippedScratchCount) unsaved notes")
+        }
+        if result.skippedReadOnlyCount > 0 {
+            parts.append(result.skippedReadOnlyCount == 1 ? "skipped 1 read-only file" : "skipped \(result.skippedReadOnlyCount) read-only files")
+        }
+        if result.failedCount > 0 {
+            parts.append(result.failedCount == 1 ? "failed 1 file" : "failed \(result.failedCount) files")
+        }
+
+        return parts.joined(separator: ", ") + "."
     }
 
     private func compactPath(for fileURL: URL) -> String {

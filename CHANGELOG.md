@@ -4,6 +4,26 @@ All notable user-facing changes to Ohbee Editor are tracked here.
 
 This project follows small, practical releases. Version numbers are currently maintained manually in `Makefile`, `Support/Info.plist`, and `README.md`.
 
+## 1.1.6 - 2026-05-24
+
+### Added
+
+- Added Reopen Closed File with `Cmd+Shift+T`, limited to the 10 most recently closed file-backed tabs.
+- Added Save All with `Cmd+Option+S` for dirty file-backed tabs.
+- Added Copy File Path and Copy File Name actions for file-backed tab context menus.
+- Added Copy Summary to Safe Share Review so findings category counts can be copied without copying sensitive values.
+- Added app version and build number to the About window.
+
+### Improved
+
+- Improved Open Recent by disabling missing files and adding Remove Missing Recent Files.
+- Kept Reopen Closed File scoped to local files only; unsaved notes are not kept in the reopen stack.
+
+### Release
+
+- Bumped app version to 1.1.6.
+- Bumped bundle build number to 11.
+
 ## 1.1.5 - 2026-05-22
 
 ### Added

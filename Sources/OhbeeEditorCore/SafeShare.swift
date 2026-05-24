@@ -34,11 +34,26 @@ public struct SafeShareReview: Equatable {
             }
     }
 
+    public var copyableFindingsSummary: String {
+        guard hasFindings else {
+            return "No obvious sensitive patterns found."
+        }
+
+        let categories = categorySummaries
+            .map { "\($0.count) \(displayName(for: $0))" }
+            .joined(separator: ", ")
+        return "Potential sensitive text found: \(categories)."
+    }
+
     public func maskedText(includingFindingIndexes indexes: Set<Int>) -> String {
         let selectedFindings = findings.enumerated().compactMap { index, finding in
             indexes.contains(index) ? finding : nil
         }
         return SafeShare.maskedText(for: sourceText, findings: selectedFindings)
+    }
+
+    private func displayName(for summary: SafeShareCategorySummary) -> String {
+        summary.count == 1 ? summary.category : "\(summary.category)s"
     }
 }
 
