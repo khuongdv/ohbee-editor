@@ -4,6 +4,7 @@ import OhbeeEditorCore
 
 @main
 struct OhbeeEditorApp: App {
+    @NSApplicationDelegateAdaptor(OhbeeEditorAppDelegate.self) private var appDelegate
     @StateObject private var store = EditorStore()
     @State private var isSearchVisible = false
     @State private var isAboutVisible = false
@@ -39,11 +40,13 @@ struct OhbeeEditorApp: App {
                     )
                 }
                 .onOpenURL { url in
-                    guard url.isFileURL else {
-                        return
+                    openExternalFiles([url])
+                }
+                .onAppear {
+                    appDelegate.openFilesHandler = { urls in
+                        openExternalFiles(urls)
                     }
-
-                    store.openDocument(from: url)
+                    appDelegate.flushPendingOpenFiles()
                 }
                 .onChange(of: scenePhase) { phase in
                     if phase != .active {
@@ -291,6 +294,20 @@ struct OhbeeEditorApp: App {
         EditorTextOperationCenter.shared.applyTransform(named: name, store: store, transform: transform)
     }
 
+    private func openExternalFiles(_ urls: [URL]) {
+        let fileURLs = urls.filter(\.isFileURL).map(\.standardizedFileURL)
+        guard !fileURLs.isEmpty else {
+            return
+        }
+
+        DispatchQueue.main.async {
+            for url in fileURLs {
+                store.openDocument(from: url)
+            }
+            activateAppWindow()
+        }
+    }
+
     private var languageSelection: Binding<EditorLanguage> {
         Binding(
             get: { store.selectedLanguage },
@@ -449,5 +466,45 @@ struct OhbeeEditorApp: App {
 
     private func saveAll() {
         store.saveAllDocuments()
+    }
+}
+
+final class OhbeeEditorAppDelegate: NSObject, NSApplicationDelegate {
+    var openFilesHandler: (([URL]) -> Void)?
+    private var pendingOpenFileURLs: [URL] = []
+
+    func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        let urls = filenames.map { URL(fileURLWithPath: $0) }
+        enqueueOpenFiles(urls)
+        sender.reply(toOpenOrPrint: .success)
+    }
+
+    func application(_ sender: NSApplication, openFile filename: String) -> Bool {
+        enqueueOpenFiles([URL(fileURLWithPath: filename)])
+        return true
+    }
+
+    func flushPendingOpenFiles() {
+        guard !pendingOpenFileURLs.isEmpty else {
+            return
+        }
+
+        let urls = pendingOpenFileURLs
+        pendingOpenFileURLs = []
+        openFilesHandler?(urls)
+    }
+
+    private func enqueueOpenFiles(_ urls: [URL]) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else {
+                return
+            }
+
+            if let openFilesHandler {
+                openFilesHandler(urls)
+            } else {
+                pendingOpenFileURLs.append(contentsOf: urls)
+            }
+        }
     }
 }

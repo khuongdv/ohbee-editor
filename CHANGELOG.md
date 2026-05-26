@@ -4,6 +4,22 @@ All notable user-facing changes to Ohbee Editor are tracked here.
 
 This project follows small, practical releases. Version numbers are currently maintained manually in `Makefile`, `Support/Info.plist`, and `README.md`.
 
+## 1.1.7 - 2026-05-26
+
+### Fixed
+
+- Fixed Finder/Open With file-opening reliability by handling macOS document-open events through an AppKit application delegate.
+- Deferred external file opens onto the main queue before updating editor state.
+
+### Improved
+
+- Made the tab strip horizontally scrollable so opening many files keeps toolbar layout bounded.
+
+### Release
+
+- Bumped app version to 1.1.7.
+- Bumped bundle build number to 12.
+
 ## 1.1.6 - 2026-05-24
 
 ### Added

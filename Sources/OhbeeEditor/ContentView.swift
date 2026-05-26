@@ -71,74 +71,78 @@ struct ContentView: View {
             OhbeeLogoImage(size: 24)
                 .help("Ohbee Editor")
 
-            ForEach(store.documents) { document in
-                TabItemView(
-                    document: document,
-                    isSelected: store.selectedDocumentID == document.id,
-                    tooltip: document.fileURL?.path ?? document.title,
-                    action: { store.selectDocument(document.id) },
-                    closeAction: { closeTabWithWarning(document.id) }
-                )
-                .onDrag {
-                    draggingDocumentID = document.id
-                    return NSItemProvider(object: document.id.uuidString as NSString)
-                }
-                .onDrop(of: [UTType.text], delegate: TabDropDelegate(
-                    documentID: document.id,
-                    store: store,
-                    draggingDocumentID: $draggingDocumentID
-                ))
-                .contextMenu {
-                    Button("Close This Tab") {
-                        closeTabWithWarning(document.id)
-                    }
-
-                    Button("Close Other Tabs") {
-                        closeOtherTabsWithWarning(keeping: document.id)
-                    }
-                    .disabled(store.documents.count <= 1)
-
-                    Button("Close Tabs to the Right") {
-                        closeTabsToRightWithWarning(of: document.id)
-                    }
-                    .disabled(!hasTabsToRight(of: document.id))
-
-                    Divider()
-
-                    if let fileURL = document.fileURL {
-                        Button("Copy File Path") {
-                            copyToPasteboard(fileURL.path)
-                            store.reportOperationStatus("Copied file path.")
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(store.documents) { document in
+                        TabItemView(
+                            document: document,
+                            isSelected: store.selectedDocumentID == document.id,
+                            tooltip: document.fileURL?.path ?? document.title,
+                            action: { store.selectDocument(document.id) },
+                            closeAction: { closeTabWithWarning(document.id) }
+                        )
+                        .onDrag {
+                            draggingDocumentID = document.id
+                            return NSItemProvider(object: document.id.uuidString as NSString)
                         }
+                        .onDrop(of: [UTType.text], delegate: TabDropDelegate(
+                            documentID: document.id,
+                            store: store,
+                            draggingDocumentID: $draggingDocumentID
+                        ))
+                        .contextMenu {
+                            Button("Close This Tab") {
+                                closeTabWithWarning(document.id)
+                            }
 
-                        Button("Copy File Name") {
-                            copyToPasteboard(fileURL.lastPathComponent)
-                            store.reportOperationStatus("Copied file name.")
+                            Button("Close Other Tabs") {
+                                closeOtherTabsWithWarning(keeping: document.id)
+                            }
+                            .disabled(store.documents.count <= 1)
+
+                            Button("Close Tabs to the Right") {
+                                closeTabsToRightWithWarning(of: document.id)
+                            }
+                            .disabled(!hasTabsToRight(of: document.id))
+
+                            Divider()
+
+                            if let fileURL = document.fileURL {
+                                Button("Copy File Path") {
+                                    copyToPasteboard(fileURL.path)
+                                    store.reportOperationStatus("Copied file path.")
+                                }
+
+                                Button("Copy File Name") {
+                                    copyToPasteboard(fileURL.lastPathComponent)
+                                    store.reportOperationStatus("Copied file name.")
+                                }
+
+                                Divider()
+                            }
+
+                            Button("Close All Tabs") {
+                                closeAllTabsWithWarning()
+                            }
                         }
-
-                        Divider()
                     }
 
-                    Button("Close All Tabs") {
-                        closeAllTabsWithWarning()
+                    NewNoteButton(
+                        isEnabled: store.canCreateScratchDocument,
+                        action: store.createScratchDocument
+                    )
+                    .disabled(!store.canCreateScratchDocument)
+                    .help(store.canCreateScratchDocument ? "New Note" : "Maximum \(EditorStore.maxDocumentCount) tabs")
+
+                    if !store.canCreateScratchDocument {
+                        Text("Max \(EditorStore.maxDocumentCount) tabs")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
+                .padding(.vertical, 1)
             }
-
-            NewNoteButton(
-                isEnabled: store.canCreateScratchDocument,
-                action: store.createScratchDocument
-            )
-            .disabled(!store.canCreateScratchDocument)
-            .help(store.canCreateScratchDocument ? "New Note" : "Maximum \(EditorStore.maxDocumentCount) tabs")
-
-            if !store.canCreateScratchDocument {
-                Text("Max \(EditorStore.maxDocumentCount) tabs")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
+            .frame(minWidth: 120, maxWidth: .infinity, alignment: .leading)
 
             Button {
                 isSearchVisible.toggle()
@@ -713,7 +717,7 @@ private struct ScratchEditorView: View {
     }
 }
 
-private func activateAppWindow() {
+func activateAppWindow() {
     DispatchQueue.main.async {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
