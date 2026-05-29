@@ -44,7 +44,9 @@ struct HighlightedTextEditor: NSViewRepresentable {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
         textView.allowsUndo = true
-        textView.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        let editorFont = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        textView.font = editorFont
+        textView.applyEditorParagraphStyle(for: editorFont)
         textView.textColor = .textColor
         textView.backgroundColor = .textBackgroundColor
         textView.isEditable = !isReadOnly
@@ -130,6 +132,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
         if fontSizeChanged {
             let newFont = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
             textView.font = newFont
+            textView.applyEditorParagraphStyle(for: newFont)
             context.coordinator.applyHighlighting(to: textView)
         }
 
@@ -194,7 +197,8 @@ struct HighlightedTextEditor: NSViewRepresentable {
             pendingHighlight = nil
             guard !isLargeFile else {
                 let font = textView.font ?? .monospacedSystemFont(ofSize: fontSize, weight: .regular)
-                textView.typingAttributes = [.font: font, .foregroundColor: NSColor.textColor]
+                textView.applyEditorParagraphStyle(for: font)
+                textView.typingAttributes = textView.defaultEditorTypingAttributes(for: font)
                 applySearchHighlights(to: textView)
                 return
             }
@@ -288,6 +292,40 @@ struct HighlightedTextEditor: NSViewRepresentable {
 }
 
 private extension NSTextView {
+    private static let editorTabWidthInSpaces = 4
+
+    func applyEditorParagraphStyle(for font: NSFont) {
+        let paragraphStyle = editorParagraphStyle(for: font)
+        defaultParagraphStyle = paragraphStyle
+        typingAttributes = defaultEditorTypingAttributes(for: font)
+        textStorage?.addAttribute(
+            .paragraphStyle,
+            value: paragraphStyle,
+            range: NSRange(location: 0, length: (string as NSString).length)
+        )
+    }
+
+    func defaultEditorTypingAttributes(for font: NSFont) -> [NSAttributedString.Key: Any] {
+        [
+            .font: font,
+            .foregroundColor: NSColor.textColor,
+            .paragraphStyle: editorParagraphStyle(for: font)
+        ]
+    }
+
+    private func editorParagraphStyle(for font: NSFont) -> NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        let tabWidth = Self.editorTabWidth(for: font)
+        style.defaultTabInterval = tabWidth
+        style.tabStops = []
+        return style
+    }
+
+    private static func editorTabWidth(for font: NSFont) -> CGFloat {
+        let spaces = String(repeating: " ", count: editorTabWidthInSpaces)
+        return max(1, (spaces as NSString).size(withAttributes: [.font: font]).width)
+    }
+
     func visibleCharacterRangeWithContext() -> NSRange {
         let source = string as NSString
         guard
@@ -608,10 +646,7 @@ private final class SimpleSyntaxHighlighter {
         let text = textView.string
         let fullRange = NSRange(location: 0, length: (text as NSString).length)
         let font = textView.font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        let defaultAttributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor.textColor
-        ]
+        let defaultAttributes = textView.defaultEditorTypingAttributes(for: font)
 
         if visibleOnlyWhenLarge && text.count > visibleOnlyThreshold {
             let visibleRange = textView.visibleCharacterRangeWithContext()
