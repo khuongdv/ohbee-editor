@@ -7,6 +7,7 @@ struct ContentView: View {
     @ObservedObject var store: EditorStore
     @Binding var isSearchVisible: Bool
     @Binding var isSafeShareReviewVisible: Bool
+    @Binding var isCommandPaletteVisible: Bool
     @Environment(\.colorScheme) private var colorScheme
     @State private var showDocInfo = false
     @State private var showWordFrequency = false
@@ -14,6 +15,8 @@ struct ContentView: View {
     @State private var showCompare = false
     @State private var safeShareReview: SafeShareReview?
     @State private var draggingDocumentID: EditorDocument.ID?
+    @State private var lineFilterRequest: LineFilterRequest?
+    @State private var commandPaletteActions: [CommandPaletteAction] = []
     @FocusState private var searchFieldFocused: Bool
 
     var body: some View {
@@ -27,8 +30,18 @@ struct ContentView: View {
             editorArea
             statusBar
         }
+        .overlay(alignment: .top) {
+            if isCommandPaletteVisible {
+                CommandPaletteView(
+                    actions: commandPaletteActions,
+                    isPresented: $isCommandPaletteVisible
+                )
+                .padding(.top, 56)
+            }
+        }
         .onAppear {
             activateAppWindow()
+            rebuildCommandPaletteActions()
         }
         .onChange(of: isSearchVisible) { visible in
             if visible {
@@ -55,6 +68,18 @@ struct ContentView: View {
                 },
                 onCancel: {
                     isSafeShareReviewVisible = false
+                }
+            )
+        }
+        .sheet(item: $lineFilterRequest) { request in
+            LineFilterSheet(
+                request: request,
+                onApply: { query in
+                    EditorTextOperationCenter.shared.applyTransform(
+                        named: request.title,
+                        store: store,
+                        transform: request.mode.transform(query: query)
+                    )
                 }
             )
         }
@@ -349,6 +374,21 @@ struct ContentView: View {
             .controlSize(.small)
             .font(.caption)
 
+            Menu("Log") {
+                Button("Keep Lines Containing…") {
+                    presentLineFilter(.keep)
+                }
+                Button("Remove Lines Containing…") {
+                    presentLineFilter(.remove)
+                }
+                Divider()
+                transformButton("Extract URLs", LogCleanupTools.extractURLs)
+                transformButton("Extract IPv4 Addresses", LogCleanupTools.extractIPv4Addresses)
+                transformButton("Remove Timestamp Prefixes", LogCleanupTools.removeTimestampPrefixes)
+            }
+            .controlSize(.small)
+            .font(.caption)
+
             Menu("JSON") {
                 transformButton("Format JSON", JSONTools.format)
                 transformButton("Minify JSON", JSONTools.minify)
@@ -501,6 +541,59 @@ struct ContentView: View {
         }
     }
 
+    private func rebuildCommandPaletteActions() {
+        commandPaletteActions = [
+            CommandPaletteAction(title: "New Note", subtitle: "Create a fresh scratch tab", keywords: "scratch tab") {
+                store.createScratchDocument()
+            },
+            CommandPaletteAction(title: "Find and Replace", subtitle: "Show current-tab search controls", keywords: "search replace") {
+                isSearchVisible = true
+            },
+            CommandPaletteAction(title: "Review Safe Share", subtitle: "Review likely sensitive text before sharing", keywords: "mask redact secret token") {
+                presentSafeShareReview()
+            },
+            CommandPaletteAction(title: "Clean AI Output", subtitle: "Remove fences, excess blanks, trailing spaces", keywords: "markdown fence cleanup") {
+                applyPaletteTransform("Clean AI Output", BasicTextTransforms.cleanAIOutput)
+            },
+            CommandPaletteAction(title: "Format JSON", subtitle: "Pretty-print valid JSON", keywords: "json pretty") {
+                applyPaletteTransform("Format JSON", JSONTools.format)
+            },
+            CommandPaletteAction(title: "Minify JSON", subtitle: "Compact valid JSON", keywords: "json compact") {
+                applyPaletteTransform("Minify JSON", JSONTools.minify)
+            },
+            CommandPaletteAction(title: "Remove Tracking Parameters", subtitle: "Strip common tracking query params from URLs", keywords: "url utm fbclid gclid") {
+                applyPaletteTransform("Remove Tracking Parameters", URLTools.removeTrackingParameters)
+            },
+            CommandPaletteAction(title: "Keep Lines Containing", subtitle: "Filter log lines by text", keywords: "log grep include") {
+                presentLineFilter(.keep)
+            },
+            CommandPaletteAction(title: "Remove Lines Containing", subtitle: "Drop log lines by text", keywords: "log exclude filter") {
+                presentLineFilter(.remove)
+            },
+            CommandPaletteAction(title: "Extract URLs", subtitle: "Keep unique URLs from messy text", keywords: "log links") {
+                applyPaletteTransform("Extract URLs", LogCleanupTools.extractURLs)
+            },
+            CommandPaletteAction(title: "Extract IPv4 Addresses", subtitle: "Keep unique IPv4 addresses", keywords: "log ip address") {
+                applyPaletteTransform("Extract IPv4 Addresses", LogCleanupTools.extractIPv4Addresses)
+            },
+            CommandPaletteAction(title: "Remove Timestamp Prefixes", subtitle: "Strip common log timestamp prefixes", keywords: "log date time") {
+                applyPaletteTransform("Remove Timestamp Prefixes", LogCleanupTools.removeTimestampPrefixes)
+            },
+            CommandPaletteAction(title: "Mask Detected Patterns", subtitle: "Mask likely secrets, emails, tokens, and phone numbers", keywords: "safe share redact") {
+                applyPaletteTransform("Mask Detected Patterns", SafeShare.maskDetectedPatterns)
+            },
+            CommandPaletteAction(title: "Trim Trailing Spaces", subtitle: "Remove spaces and tabs at line ends", keywords: "whitespace cleanup") {
+                applyPaletteTransform("Trim Trailing Spaces", BasicTextTransforms.trimTrailingWhitespace)
+            },
+            CommandPaletteAction(title: "Sort Lines A-Z", subtitle: "Sort selected or full text", keywords: "lines ascending") {
+                applyPaletteTransform("Sort Lines A-Z", BasicTextTransforms.sortLines)
+            },
+            CommandPaletteAction(title: "Remove Duplicate Lines", subtitle: "Keep first occurrence of each line", keywords: "unique lines") {
+                applyPaletteTransform("Remove Duplicate Lines", BasicTextTransforms.removeDuplicateLines)
+            }
+        ]
+    }
+
     @ViewBuilder
     private func transformButton(
         _ title: String,
@@ -515,6 +608,24 @@ struct ContentView: View {
         DispatchQueue.main.async {
             EditorTextOperationCenter.shared.selectCurrentSearchMatch(store: store)
         }
+    }
+
+    private func applyPaletteTransform(
+        _ title: String,
+        _ transform: @escaping (String) -> TextTransformResult
+    ) {
+        EditorTextOperationCenter.shared.applyTransform(named: title, store: store, transform: transform)
+    }
+
+    private func presentLineFilter(_ mode: LineFilterMode) {
+        let selected = EditorTextOperationCenter.shared.selectedText(store: store)
+        let initialQuery: String
+        if let selected, !selected.contains("\n"), !selected.contains("\r"), selected.count <= 80 {
+            initialQuery = selected.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            initialQuery = ""
+        }
+        lineFilterRequest = LineFilterRequest(mode: mode, initialQuery: initialQuery)
     }
 
     private func presentSafeShareReview() {
@@ -961,6 +1072,223 @@ private struct DocumentInfoView: View {
               let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
               let sizeNum = attrs[.size] as? NSNumber else { return nil }
         return ByteCountFormatter.string(fromByteCount: sizeNum.int64Value, countStyle: .file)
+    }
+}
+
+private struct CommandPaletteAction: Identifiable {
+    let id: String
+    let title: String
+    let subtitle: String
+    let keywords: String
+    let perform: () -> Void
+
+    init(title: String, subtitle: String, keywords: String = "", perform: @escaping () -> Void) {
+        self.id = title
+        self.title = title
+        self.subtitle = subtitle
+        self.keywords = keywords
+        self.perform = perform
+    }
+
+    func matches(_ query: String) -> Bool {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return true
+        }
+
+        let haystack = "\(title) \(subtitle) \(keywords)"
+        return haystack.range(of: trimmed, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+    }
+}
+
+private struct CommandPaletteView: View {
+    let actions: [CommandPaletteAction]
+    @Binding var isPresented: Bool
+    @State private var query = ""
+    @FocusState private var isSearchFocused: Bool
+
+    private var filteredActions: [CommandPaletteAction] {
+        actions.filter { $0.matches(query) }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "command")
+                    .foregroundStyle(.secondary)
+
+                TextField("Command", text: $query)
+                    .textFieldStyle(.plain)
+                    .focused($isSearchFocused)
+                    .onSubmit(runFirstAction)
+
+                Button {
+                    isPresented = false
+                } label: {
+                    Image(systemName: "xmark")
+                        .accessibilityLabel("Close Command Palette")
+                }
+                .buttonStyle(.borderless)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+
+            Divider()
+
+            if filteredActions.isEmpty {
+                Text("No commands")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(filteredActions.prefix(10)) { action in
+                        Button {
+                            run(action)
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "return")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 16)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(action.title)
+                                        .font(.callout)
+                                        .foregroundStyle(.primary)
+                                    Text(action.subtitle)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer()
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+
+                        if action.id != filteredActions.prefix(10).last?.id {
+                            Divider()
+                        }
+                    }
+                }
+            }
+        }
+        .frame(width: 460)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .shadow(radius: 18, y: 8)
+        .onAppear {
+            isSearchFocused = true
+        }
+        .onExitCommand {
+            isPresented = false
+        }
+    }
+
+    private func runFirstAction() {
+        guard let action = filteredActions.first else {
+            return
+        }
+
+        run(action)
+    }
+
+    private func run(_ action: CommandPaletteAction) {
+        isPresented = false
+        action.perform()
+    }
+}
+
+private enum LineFilterMode {
+    case keep
+    case remove
+
+    var title: String {
+        switch self {
+        case .keep:
+            return "Keep Lines Containing"
+        case .remove:
+            return "Remove Lines Containing"
+        }
+    }
+
+    var prompt: String {
+        switch self {
+        case .keep:
+            return "Keep lines containing"
+        case .remove:
+            return "Remove lines containing"
+        }
+    }
+
+    func transform(query: String) -> (String) -> TextTransformResult {
+        switch self {
+        case .keep:
+            return LogCleanupTools.keepLines(containing: query)
+        case .remove:
+            return LogCleanupTools.removeLines(containing: query)
+        }
+    }
+}
+
+private struct LineFilterRequest: Identifiable {
+    let id = UUID()
+    let mode: LineFilterMode
+    let initialQuery: String
+
+    var title: String { mode.title }
+}
+
+private struct LineFilterSheet: View {
+    let request: LineFilterRequest
+    let onApply: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var query: String
+    @FocusState private var isFocused: Bool
+
+    init(request: LineFilterRequest, onApply: @escaping (String) -> Void) {
+        self.request = request
+        self.onApply = onApply
+        _query = State(initialValue: request.initialQuery)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(request.title)
+                .font(.headline)
+
+            TextField(request.mode.prompt, text: $query)
+                .textFieldStyle(.roundedBorder)
+                .focused($isFocused)
+                .onSubmit(apply)
+
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    dismiss()
+                }
+                Button("Apply") {
+                    apply()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(18)
+        .frame(width: 360)
+        .onAppear {
+            isFocused = true
+        }
+    }
+
+    private func apply() {
+        onApply(query)
+        dismiss()
     }
 }
 

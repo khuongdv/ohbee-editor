@@ -7,8 +7,8 @@ public enum TextTransformResult: Equatable {
 
 public enum BasicTextTransforms {
     public static func trimWhitespace(_ text: String) -> TextTransformResult {
-        let lineEnding = LineEnding.preferred(in: text)
-        let lines = splitLines(text)
+        let lineEnding = TextLineTools.preferredLineEnding(in: text)
+        let lines = TextLineTools.splitLines(text)
         let trimmedLines = lines.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         let changedLineCount = zip(lines, trimmedLines).filter { $0 != $1 }.count
 
@@ -19,8 +19,8 @@ public enum BasicTextTransforms {
     }
 
     public static func trimTrailingWhitespace(_ text: String) -> TextTransformResult {
-        let lineEnding = LineEnding.preferred(in: text)
-        let lines = splitLines(text)
+        let lineEnding = TextLineTools.preferredLineEnding(in: text)
+        let lines = TextLineTools.splitLines(text)
         let trimmedLines = lines.map { line in
             line.replacingOccurrences(
                 of: #"[ \t]+$"#,
@@ -38,8 +38,8 @@ public enum BasicTextTransforms {
     }
 
     public static func removeEmptyLines(_ text: String) -> TextTransformResult {
-        let lineEnding = LineEnding.preferred(in: text)
-        let lines = splitLines(text)
+        let lineEnding = TextLineTools.preferredLineEnding(in: text)
+        let lines = TextLineTools.splitLines(text)
         let keptLines = lines.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         let removedCount = lines.count - keptLines.count
 
@@ -50,9 +50,9 @@ public enum BasicTextTransforms {
     }
 
     public static func removeDuplicateLines(_ text: String) -> TextTransformResult {
-        let lineEnding = LineEnding.preferred(in: text)
+        let lineEnding = TextLineTools.preferredLineEnding(in: text)
         var seen = Set<String>()
-        let lines = splitLines(text)
+        let lines = TextLineTools.splitLines(text)
         let keptLines = lines.filter { line in
             if seen.contains(line) {
                 return false
@@ -69,8 +69,8 @@ public enum BasicTextTransforms {
     }
 
     public static func sortLines(_ text: String) -> TextTransformResult {
-        let lineEnding = LineEnding.preferred(in: text)
-        let lines = splitLines(text)
+        let lineEnding = TextLineTools.preferredLineEnding(in: text)
+        let lines = TextLineTools.splitLines(text)
 
         return .success(
             text: lines.sorted { $0.localizedStandardCompare($1) == .orderedAscending }.joined(separator: lineEnding.rawValue),
@@ -79,8 +79,8 @@ public enum BasicTextTransforms {
     }
 
     public static func sortLinesDescending(_ text: String) -> TextTransformResult {
-        let lineEnding = LineEnding.preferred(in: text)
-        let lines = splitLines(text)
+        let lineEnding = TextLineTools.preferredLineEnding(in: text)
+        let lines = TextLineTools.splitLines(text)
 
         return .success(
             text: lines.sorted { $0.localizedStandardCompare($1) == .orderedDescending }.joined(separator: lineEnding.rawValue),
@@ -89,7 +89,7 @@ public enum BasicTextTransforms {
     }
 
     public static func joinLines(_ text: String) -> TextTransformResult {
-        let lines = splitLines(text)
+        let lines = TextLineTools.splitLines(text)
         let joined = lines
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
@@ -149,7 +149,7 @@ public enum BasicTextTransforms {
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
         let withoutFence = removeSurroundingCodeFence(normalized)
-        let trailingTrimmed = splitLines(withoutFence).map { line in
+        let trailingTrimmed = TextLineTools.splitLines(withoutFence).map { line in
             line.replacingOccurrences(
                 of: #"[ \t]+$"#,
                 with: "",
@@ -166,36 +166,6 @@ public enum BasicTextTransforms {
             text: compactedBlankLines.trimmingCharacters(in: .whitespacesAndNewlines),
             summary: "Cleaned AI output."
         )
-    }
-
-    private static func splitLines(_ text: String) -> [String] {
-        text
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-            .components(separatedBy: "\n")
-    }
-
-    private enum LineEnding: String {
-        case lf = "\n"
-        case crlf = "\r\n"
-        case cr = "\r"
-
-        static func preferred(in text: String) -> LineEnding {
-            let crlfCount = text.components(separatedBy: "\r\n").count - 1
-            let withoutCRLF = text.replacingOccurrences(of: "\r\n", with: "")
-            let lfCount = withoutCRLF.components(separatedBy: "\n").count - 1
-            let crCount = withoutCRLF.components(separatedBy: "\r").count - 1
-
-            if crlfCount >= lfCount && crlfCount >= crCount && crlfCount > 0 {
-                return .crlf
-            }
-
-            if crCount > lfCount {
-                return .cr
-            }
-
-            return .lf
-        }
     }
 
     private static func lineSummary(_ verb: String, count: Int) -> String {
@@ -224,7 +194,7 @@ public enum BasicTextTransforms {
 
     private static func removeSurroundingCodeFence(_ text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lines = splitLines(trimmed)
+        let lines = TextLineTools.splitLines(trimmed)
 
         guard
             lines.count >= 2,

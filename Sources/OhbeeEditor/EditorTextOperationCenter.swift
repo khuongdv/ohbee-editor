@@ -36,6 +36,7 @@ final class EditorTextOperationCenter {
             return
         }
 
+        finalizeMarkedText(in: textView)
         let fullText = textView.string as NSString
         let targetRange = operationRange(in: textView, textLength: fullText.length)
         let originalText = fullText.substring(with: targetRange)
@@ -47,7 +48,11 @@ final class EditorTextOperationCenter {
                 return
             }
 
-            replaceText(in: textView, range: targetRange, with: text)
+            guard replaceText(in: textView, range: targetRange, with: text) else {
+                store.reportOperationStatus("\(name): could not apply change.", tone: .warning)
+                return
+            }
+
             store.reportOperationStatus(summary)
             selectRangeAfterTransform(in: textView, originalDocument: document, replacement: text)
         case let .failure(message):
@@ -65,6 +70,7 @@ final class EditorTextOperationCenter {
             return
         }
 
+        finalizeMarkedText(in: textView)
         let source = textView.string as NSString
         let targetRange = operationRange(in: textView, textLength: source.length)
         let result = inspector(source.substring(with: targetRange))
@@ -76,9 +82,25 @@ final class EditorTextOperationCenter {
             return store.selectedDocument?.text ?? ""
         }
 
+        finalizeMarkedText(in: textView)
         let source = textView.string as NSString
         let targetRange = operationRange(in: textView, textLength: source.length)
         return source.substring(with: targetRange)
+    }
+
+    func selectedText(store: EditorStore) -> String? {
+        guard let textView = activeTextView(for: store) else {
+            return nil
+        }
+
+        finalizeMarkedText(in: textView)
+        let source = textView.string as NSString
+        let selectedRange = textView.selectedRange()
+        guard selectedRange.length > 0, NSMaxRange(selectedRange) <= source.length else {
+            return nil
+        }
+
+        return source.substring(with: selectedRange)
     }
 
     func applyReviewedText(_ replacement: String, named name: String, store: EditorStore) {
@@ -107,7 +129,14 @@ final class EditorTextOperationCenter {
     func replaceCurrentSearchMatch(store: EditorStore) {
         guard
             let textView = activeTextView(for: store),
-            let currentMatchIndex = store.currentMatchIndex,
+            let currentMatchIndex = store.currentMatchIndex
+        else {
+            store.replaceCurrentMatch()
+            return
+        }
+
+        finalizeMarkedText(in: textView)
+        guard
             let range = SearchReplaceEngine.matchRange(
                 in: textView.string,
                 options: store.searchOptions,
@@ -120,7 +149,11 @@ final class EditorTextOperationCenter {
 
         let source = (textView.string as NSString).substring(with: range)
         let replacement = SearchReplaceEngine.replacementText(forMatchedText: source, options: store.searchOptions)
-        replaceText(in: textView, range: range, with: replacement)
+        guard replaceText(in: textView, range: range, with: replacement) else {
+            store.reportOperationStatus("Replace: could not apply change.", tone: .warning)
+            return
+        }
+
         store.reportOperationStatus("Replaced 1 match.")
 
         DispatchQueue.main.async {
@@ -134,6 +167,7 @@ final class EditorTextOperationCenter {
             return
         }
 
+        finalizeMarkedText(in: textView)
         switch SearchReplaceEngine.replaceAll(in: textView.string, options: store.searchOptions) {
         case let .success(text, replacementCount):
             guard replacementCount > 0, text != textView.string else {
@@ -142,7 +176,11 @@ final class EditorTextOperationCenter {
             }
 
             let fullRange = NSRange(location: 0, length: (textView.string as NSString).length)
-            replaceText(in: textView, range: fullRange, with: text)
+            guard replaceText(in: textView, range: fullRange, with: text) else {
+                store.reportOperationStatus("Replace All: could not apply change.", tone: .warning)
+                return
+            }
+
             store.reportOperationStatus(replacementCount == 1
                 ? "Replaced 1 match."
                 : "Replaced \(replacementCount) matches.")
@@ -184,8 +222,30 @@ final class EditorTextOperationCenter {
         return selectedRange
     }
 
-    private func replaceText(in textView: NSTextView, range: NSRange, with replacement: String) {
-        textView.insertText(replacement, replacementRange: range)
+    private func replaceText(in textView: NSTextView, range: NSRange, with replacement: String) -> Bool {
+        guard textView.isEditable else {
+            return false
+        }
+
+        finalizeMarkedText(in: textView)
+
+        guard let textStorage = textView.textStorage,
+              textView.shouldChangeText(in: range, replacementString: replacement) else {
+            return false
+        }
+
+        textView.breakUndoCoalescing()
+        textView.undoManager?.beginUndoGrouping()
+        textStorage.replaceCharacters(in: range, with: replacement)
+        textView.didChangeText()
+        textView.undoManager?.endUndoGrouping()
+        return true
+    }
+
+    private func finalizeMarkedText(in textView: NSTextView) {
+        if textView.hasMarkedText() {
+            textView.unmarkText()
+        }
     }
 
     private func selectRangeAfterTransform(

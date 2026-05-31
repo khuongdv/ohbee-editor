@@ -11,6 +11,7 @@ struct OhbeeEditorApp: App {
     @State private var isHelpVisible = false
     @State private var isCompareVisible = false
     @State private var isSafeShareReviewVisible = false
+    @State private var isCommandPaletteVisible = false
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("ohbee.lineNumbers") private var showLineNumbers = true
     @AppStorage("ohbee.fontSize") private var fontSize: Double = 13
@@ -20,7 +21,8 @@ struct OhbeeEditorApp: App {
             ContentView(
                 store: store,
                 isSearchVisible: $isSearchVisible,
-                isSafeShareReviewVisible: $isSafeShareReviewVisible
+                isSafeShareReviewVisible: $isSafeShareReviewVisible,
+                isCommandPaletteVisible: $isCommandPaletteVisible
             )
                 .frame(minWidth: 760, minHeight: 520)
                 .navigationTitle(store.windowTitle)
@@ -161,6 +163,13 @@ struct OhbeeEditorApp: App {
 
                 Divider()
 
+                Button("Command Palette...") {
+                    isCommandPaletteVisible = true
+                }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+
+                Divider()
+
                 Button("Compare Tabs…") {
                     isCompareVisible = true
                 }
@@ -257,6 +266,12 @@ struct OhbeeEditorApp: App {
                     .disabled(!store.selectedDocumentSupportsXMLTools)
                 Button("Minify XML") { apply("Minify XML", XMLTools.minify) }
                     .disabled(!store.selectedDocumentSupportsXMLTools)
+
+                Divider()
+
+                Button("Extract URLs") { apply("Extract URLs", LogCleanupTools.extractURLs) }
+                Button("Extract IPv4 Addresses") { apply("Extract IPv4 Addresses", LogCleanupTools.extractIPv4Addresses) }
+                Button("Remove Timestamp Prefixes") { apply("Remove Timestamp Prefixes", LogCleanupTools.removeTimestampPrefixes) }
 
                 Divider()
 

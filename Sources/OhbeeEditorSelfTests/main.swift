@@ -573,6 +573,87 @@ func testURLTools() throws {
         ),
         "Tracking cleanup should clean embedded URLs in prose."
     )
+
+    try expect(
+        URLTools.removeTrackingParameters("See https://ohbee.link/path?utm_source=x).") == .success(
+            text: "See https://ohbee.link/path).",
+            summary: "Removed 1 tracking parameter."
+        ),
+        "Tracking cleanup should preserve trailing prose punctuation outside the URL."
+    )
+}
+
+func testLogCleanupTools() throws {
+    let log = """
+    2026-06-01 10:00:00 INFO started
+    2026-06-01 10:00:01 ERROR failed for https://example.com/a?b=1
+    10:00:02 warn client 192.168.1.20 retried
+    10:00:03 ERROR duplicate https://example.com/a?b=1 from 999.1.1.1
+    """
+
+    try expect(
+        LogCleanupTools.keepLines(containing: "error")(log) == .success(
+            text: "2026-06-01 10:00:01 ERROR failed for https://example.com/a?b=1\n10:00:03 ERROR duplicate https://example.com/a?b=1 from 999.1.1.1",
+            summary: "Kept 2 lines."
+        ),
+        "Keep lines containing should filter lines case-insensitively."
+    )
+
+    try expect(
+        LogCleanupTools.removeLines(containing: "ERROR")(log) == .success(
+            text: "2026-06-01 10:00:00 INFO started\n10:00:02 warn client 192.168.1.20 retried",
+            summary: "Removed 2 lines."
+        ),
+        "Remove lines containing should drop matching lines."
+    )
+
+    try expect(
+        LogCleanupTools.extractURLs(log) == .success(
+            text: "https://example.com/a?b=1",
+            summary: "Extracted 1 URL."
+        ),
+        "Extract URLs should return stable unique URLs."
+    )
+
+    try expect(
+        LogCleanupTools.extractIPv4Addresses(log) == .success(
+            text: "192.168.1.20",
+            summary: "Extracted 1 IPv4 address."
+        ),
+        "Extract IPv4 should reject invalid octets."
+    )
+
+    try expect(
+        LogCleanupTools.removeTimestampPrefixes("[2026-06-01 10:00:00Z] hello\n10:00:01 world") == .success(
+            text: "hello\nworld",
+            summary: "Removed timestamp prefix from 2 lines."
+        ),
+        "Remove timestamp prefixes should handle bracketed date-times and time-only prefixes."
+    )
+
+    try expect(
+        LogCleanupTools.keepLines(containing: "ERROR")("INFO ok\nERROR bad\n") == .success(
+            text: "ERROR bad\n",
+            summary: "Kept 1 line."
+        ),
+        "Keep lines containing should preserve a trailing POSIX newline."
+    )
+
+    try expect(
+        LogCleanupTools.removeLines(containing: "INFO")("INFO ok\nERROR bad\n") == .success(
+            text: "ERROR bad\n",
+            summary: "Removed 1 line."
+        ),
+        "Remove lines containing should preserve a trailing POSIX newline."
+    )
+
+    try expect(
+        LogCleanupTools.extractURLs("Read https://example.com/wiki/Go_(lang)") == .success(
+            text: "https://example.com/wiki/Go_(lang)",
+            summary: "Extracted 1 URL."
+        ),
+        "Extract URLs should keep balanced trailing parentheses inside URLs."
+    )
 }
 
 func testSafeShare() throws {
@@ -1166,6 +1247,7 @@ let tests: [(String, () throws -> Void)] = [
     ("window title", testWindowTitle),
     ("JSON tools", testJSONTools),
     ("URL tools", testURLTools),
+    ("log cleanup tools", testLogCleanupTools),
     ("Safe Share", testSafeShare),
     ("debounced session save flushes once", testDebouncedSessionSaveFlushesOnce),
     ("SQL basic keywords", testSQLBasicKeywords),
