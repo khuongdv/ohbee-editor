@@ -17,44 +17,55 @@ struct CompareTabsSheet: View {
         self.documents = documents
         self._isPresented = isPresented
         self.onCompare = onCompare
-        // Caller guarantees documents.count >= 2 before presenting this sheet.
-        let first = documents[0].id
-        let second = documents[1].id
+        let first = documents.first?.id ?? EditorDocument.ID()
+        let second = documents.dropFirst().first?.id ?? first
         self._baseID = State(initialValue: first)
         self._changedID = State(initialValue: second)
     }
 
     private var sameTab: Bool { baseID == changedID }
+    private var canCompare: Bool {
+        documents.count >= 2
+            && documents.contains { $0.id == baseID }
+            && documents.contains { $0.id == changedID }
+            && !sameTab
+    }
 
     var body: some View {
         VStack(spacing: 20) {
             Text("Compare Tabs")
                 .font(.headline)
 
-            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
-                GridRow {
-                    Text("Base (−):")
-                        .frame(width: 80, alignment: .trailing)
-                    Picker("", selection: $baseID) {
-                        ForEach(documents) { doc in
-                            Text(doc.title).tag(doc.id)
+            if documents.count < 2 {
+                Text("Open at least two tabs to compare.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                    GridRow {
+                        Text("Base (−):")
+                            .frame(width: 80, alignment: .trailing)
+                        Picker("", selection: $baseID) {
+                            ForEach(documents) { doc in
+                                Text(doc.title).tag(doc.id)
+                            }
                         }
+                        .frame(width: 200)
                     }
-                    .frame(width: 200)
-                }
-                GridRow {
-                    Text("Changed (+):")
-                        .frame(width: 80, alignment: .trailing)
-                    Picker("", selection: $changedID) {
-                        ForEach(documents) { doc in
-                            Text(doc.title).tag(doc.id)
+                    GridRow {
+                        Text("Changed (+):")
+                            .frame(width: 80, alignment: .trailing)
+                        Picker("", selection: $changedID) {
+                            ForEach(documents) { doc in
+                                Text(doc.title).tag(doc.id)
+                            }
                         }
+                        .frame(width: 200)
                     }
-                    .frame(width: 200)
                 }
             }
 
-            if sameTab {
+            if documents.count >= 2 && sameTab {
                 Text("Select two different tabs to compare.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -64,11 +75,12 @@ struct CompareTabsSheet: View {
                 Button("Cancel") { isPresented = false }
                     .keyboardShortcut(.cancelAction)
                 Button("Compare") {
+                    guard canCompare else { return }
                     onCompare(baseID, changedID)
                     isPresented = false
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(sameTab)
+                .disabled(!canCompare)
             }
         }
         .padding(24)

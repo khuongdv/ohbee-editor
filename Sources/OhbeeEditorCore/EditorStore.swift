@@ -51,9 +51,12 @@ public final class EditorStore: ObservableObject {
 
         let restoredSession = Self.restoreSession(using: sessionStore)
         let requestedDocuments = documents ?? restoredSession?.documents
-        let initialDocuments = (requestedDocuments?.isEmpty == false)
-            ? requestedDocuments!
-            : [EditorDocument.scratch(index: 1)]
+        let initialDocuments: [EditorDocument]
+        if let requestedDocuments, !requestedDocuments.isEmpty {
+            initialDocuments = requestedDocuments
+        } else {
+            initialDocuments = [EditorDocument.scratch(index: 1)]
+        }
 
         self.documents = initialDocuments
         self.selectedDocumentID = selectedDocumentID

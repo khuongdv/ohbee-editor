@@ -19,6 +19,9 @@ struct ImageViewerView: View {
                 .frame(width: 228)
         }
         .onAppear(perform: load)
+        .onChange(of: document.id) { _ in
+            load()
+        }
     }
 
     private var imagePane: some View {
@@ -165,10 +168,15 @@ struct ImageViewerView: View {
 
     private func load() {
         guard let url = document.fileURL else { return }
+        nsImage = nil
+        metadata = nil
+        loadFailed = false
+
         DispatchQueue.global(qos: .userInitiated).async {
             let img = Self.downsampledImage(from: url)
             let meta = ImageFileMetadata.load(from: url)
             DispatchQueue.main.async {
+                guard document.fileURL == url else { return }
                 if img == nil { self.loadFailed = true }
                 self.nsImage = img
                 self.metadata = meta

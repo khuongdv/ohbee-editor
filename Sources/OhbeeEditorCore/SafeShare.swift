@@ -64,8 +64,11 @@ public enum SafeShare {
 
         init(category: String, pattern: String) {
             self.category = category
-            // try! is safe: all patterns are hardcoded string literals, never user input
-            self.regex = try! NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+            do {
+                self.regex = try NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+            } catch {
+                preconditionFailure("Invalid Safe Share regex for \(category): \(error)")
+            }
         }
     }
 

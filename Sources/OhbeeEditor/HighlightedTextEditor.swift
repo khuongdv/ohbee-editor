@@ -239,9 +239,13 @@ struct HighlightedTextEditor: NSViewRepresentable {
             let fullRange = NSRange(location: 0, length: source.length)
             let shouldLimitSearchHighlights = isLargeFile || source.length > 300_000
             let limitedRange = shouldLimitSearchHighlights ? textView.visibleCharacterRangeWithContext() : fullRange
+            storage.beginEditing()
             storage.removeAttribute(.backgroundColor, range: limitedRange)
 
-            guard !isLargeFile, !searchOptions.query.isEmpty else { return }
+            guard !isLargeFile, !searchOptions.query.isEmpty else {
+                storage.endEditing()
+                return
+            }
 
             let ranges = SearchReplaceEngine.matchRanges(
                 in: textView.string,
@@ -264,6 +268,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
                     range: currentRange
                 )
             }
+            storage.endEditing()
         }
 
         private func currentVisibleSearchRange(in textView: NSTextView, visibleRange: NSRange) -> NSRange? {
@@ -298,11 +303,14 @@ private extension NSTextView {
         let paragraphStyle = editorParagraphStyle(for: font)
         defaultParagraphStyle = paragraphStyle
         typingAttributes = defaultEditorTypingAttributes(for: font)
-        textStorage?.addAttribute(
+        guard let textStorage else { return }
+        textStorage.beginEditing()
+        textStorage.addAttribute(
             .paragraphStyle,
             value: paragraphStyle,
             range: NSRange(location: 0, length: (string as NSString).length)
         )
+        textStorage.endEditing()
     }
 
     func defaultEditorTypingAttributes(for font: NSFont) -> [NSAttributedString.Key: Any] {
@@ -386,8 +394,9 @@ final class SmartIndentingTextView: NSTextView {
     override func mouseDown(with event: NSEvent) {
         if event.modifierFlags.contains(.option) {
             isColumnSelecting = true
-            columnAnchorPoint = convert(event.locationInWindow, from: nil)
-            refreshColumnRanges(from: columnAnchorPoint!, to: columnAnchorPoint!)
+            let anchorPoint = convert(event.locationInWindow, from: nil)
+            columnAnchorPoint = anchorPoint
+            refreshColumnRanges(from: anchorPoint, to: anchorPoint)
         } else {
             exitColumnMode()
             super.mouseDown(with: event)

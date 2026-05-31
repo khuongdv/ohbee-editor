@@ -151,7 +151,9 @@ public final class LocalSessionStore: SessionPersisting {
         let supportDirectory = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
-        )[0]
+        ).first ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Application Support", isDirectory: true)
 
         return supportDirectory
             .appendingPathComponent("Ohbee Editor", isDirectory: true)
