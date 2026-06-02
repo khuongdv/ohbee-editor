@@ -5,10 +5,16 @@ VERSION       = 1.1.7
 LSREGISTER    = /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 DEVELOPER_ID ?= "Developer ID Application: Your Name (XXXXXXXXXX)"
 
-.PHONY: build bundle run dev install clean icon codesign notarize
+.PHONY: build test selftest bundle run dev install clean icon codesign notarize
 
 build:
 	swift build -c release
+
+test:
+	swift run OhbeeEditorSelfTests
+
+selftest:
+	swift run OhbeeEditorSelfTests
 
 bundle: build
 	rm -rf $(APP)

@@ -296,6 +296,22 @@ func testSearchReplaceEdgeCases() throws {
     )
 }
 
+func testSearchReplaceLargeLiteralInputCompletes() throws {
+    let text = String(repeating: "alpha beta gamma\n", count: 20_000)
+    let options = SearchOptions(query: "beta", replacement: "BETA", isCaseSensitive: true)
+    let start = Date()
+    let result = SearchReplaceEngine.replaceAll(in: text, options: options)
+    let elapsed = Date().timeIntervalSince(start)
+
+    guard case let .success(replaced, replacementCount) = result else {
+        throw SelfTestError.failed("Large literal replace should succeed.")
+    }
+
+    try expect(replacementCount == 20_000, "Large literal replace should replace every matching line.")
+    try expect(!replaced.contains(" beta "), "Large literal replace should remove original literal matches.")
+    try expect(elapsed < 2.0, "Large literal replace should finish within a practical smoke-test threshold.")
+}
+
 func testCloseTabBehaviors() throws {
     let first = EditorDocument.scratch(index: 1)
     let second = EditorDocument.scratch(index: 2)
@@ -581,6 +597,14 @@ func testURLTools() throws {
         ),
         "Tracking cleanup should preserve trailing prose punctuation outside the URL."
     )
+
+    try expect(
+        URLTools.removeTrackingParameters("https://example.com/path?utm_source=news&keep=1&gclid=abc#section") == .success(
+            text: "https://example.com/path?keep=1#section",
+            summary: "Removed 2 tracking parameters."
+        ),
+        "Tracking cleanup should preserve unknown query parameters and URL fragments."
+    )
 }
 
 func testLogCleanupTools() throws {
@@ -702,10 +726,11 @@ func testSafeShare() throws {
     }
 
     if let emailFinding = review.findings.first(where: { $0.category == "Email" }) {
-        try expect(
-            SafeShare.maskedSnippet(for: emailFinding).contains("***"),
-            "Safe Share review snippets should show masked text."
-        )
+        let snippet = SafeShare.maskedSnippet(for: emailFinding)
+        try expect(snippet.contains("***"), "Safe Share review snippets should show masked text.")
+        try expect(!snippet.contains("dev@example.com"), "Safe Share review snippets should not expose full sensitive values.")
+        try expect(!snippet.contains("dev@"), "Safe Share review snippets should not expose sensitive prefixes.")
+        try expect(!snippet.contains(".com"), "Safe Share review snippets should not expose sensitive suffixes.")
     } else {
         throw SelfTestError.failed("Safe Share review should include an email finding.")
     }
@@ -1239,6 +1264,7 @@ let tests: [(String, () throws -> Void)] = [
     ("search replace", testSearchReplace),
     ("regex replace", testRegexReplace),
     ("search replace edge cases", testSearchReplaceEdgeCases),
+    ("search replace large literal input", testSearchReplaceLargeLiteralInputCompletes),
     ("close tab behaviors", testCloseTabBehaviors),
     ("close other tabs and language", testCloseOtherTabsAndLanguage),
     ("recently closed files stack", testRecentlyClosedFilesStack),

@@ -131,18 +131,8 @@ public enum SafeShare {
     }
 
     public static func maskedSnippet(for finding: SafeShareFinding, context: Int = 18) -> String {
-        let masked = mask(for: finding.text)
-        guard context > 0 else {
-            return masked
-        }
-
-        let prefix = finding.text.prefix(context)
-        let suffix = finding.text.suffix(context)
-        if finding.text.count <= context * 2 {
-            return masked
-        }
-
-        return "\(prefix)...\(suffix) → \(masked)"
+        let masked = String(repeating: "*", count: min(max(finding.text.count, 4), 24))
+        return "\(finding.category), \(finding.text.count) chars -> \(masked)"
     }
 
     private static func findings(for detector: Detector, in text: String) -> [SafeShareFinding] {
