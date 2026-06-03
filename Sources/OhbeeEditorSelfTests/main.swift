@@ -849,6 +849,19 @@ func testSQLComments() throws {
     try expect(sqlTokens(text, kind: .keyword).filter { $0.text.uppercased() == "FROM" }.count == 2, "SQL should not highlight FROM inside comments.")
 }
 
+func testSQLLineCommentsRespectNonUnixLineEndings() throws {
+    let carriageReturnText = "-- SELECT should not highlight here\rselect * from XSource where Code = 'XXX';"
+    let windowsText = "-- SELECT should not highlight here\r\ninsert into XSource values ('XXX');"
+
+    try expectSQLToken(carriageReturnText, "select", .keyword, "SQL line comments should end at carriage returns.")
+    try expectSQLToken(carriageReturnText, "from", .keyword, "SQL should resume highlighting after carriage-return line comments.")
+    try expectSQLToken(carriageReturnText, "'XX'", .string, "SQL strings should highlight after carriage-return line comments.")
+
+    try expectSQLToken(windowsText, "insert", .keyword, "SQL line comments should end before Windows newlines.")
+    try expectSQLToken(windowsText, "into", .keyword, "SQL should resume highlighting after Windows line comments.")
+    try expectSQLToken(windowsText, "'XXX'", .string, "SQL strings should highlight after Windows line comments.")
+}
+
 func testSQLNumbersAndOperators() throws {
     let text = "SELECT 0, 123, 12.34, -5, 1_000 FROM users WHERE age >= 18 AND status <> 'disabled';"
     for number in ["0", "123", "12.34", "-5", "1_000", "18"] {
@@ -1282,6 +1295,7 @@ let tests: [(String, () throws -> Void)] = [
     ("SQL functions", testSQLFunctions),
     ("SQL strings and quoted identifiers", testSQLStringsAndQuotedIdentifiers),
     ("SQL comments", testSQLComments),
+    ("SQL line comments non-Unix line endings", testSQLLineCommentsRespectNonUnixLineEndings),
     ("SQL numbers and operators", testSQLNumbersAndOperators),
     ("SQL Plain Text mode", testSQLPlainTextModeProducesNoTokens),
     ("column selection: line map single line", testLineMapSingleLine),

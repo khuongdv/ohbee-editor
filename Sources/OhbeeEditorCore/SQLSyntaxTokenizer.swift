@@ -76,7 +76,7 @@ public enum SQLSyntaxTokenizer {
             if text[index] == "-", let next = text.index(index, offsetBy: 1, limitedBy: text.endIndex), next < text.endIndex, text[next] == "-" {
                 let start = index
                 index = text.index(after: next)
-                while index < text.endIndex, text[index] != "\n" {
+                while index < text.endIndex, !isLineBreak(text[index]) {
                     index = text.index(after: index)
                 }
                 tokens.append(token(.comment, from: start, to: index, in: text))
@@ -226,6 +226,10 @@ public enum SQLSyntaxTokenizer {
 
         let previous = text[text.index(before: index)]
         return previous.isWhitespace || "(=<>!,+-*/%".contains(previous)
+    }
+
+    private static func isLineBreak(_ character: Character) -> Bool {
+        character.isNewline
     }
 
     private static func operatorEnd(from index: String.Index, in text: String) -> String.Index? {
