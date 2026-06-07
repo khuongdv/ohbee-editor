@@ -449,6 +449,23 @@ func testSaveAllDocuments() throws {
     try expect(store.documents.first { $0.id == scratch.id }?.isDirty == true, "Unsaved scratch tabs should remain dirty.")
 }
 
+func testEditorFileMetadata() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let fileURL = directory.appendingPathComponent("metadata.txt")
+    try "hello".write(to: fileURL, atomically: true, encoding: .utf8)
+
+    let metadata = EditorFileIO.metadata(for: fileURL)
+    try expect(metadata?.byteCount == 5, "File metadata should include byte count for an existing file.")
+    try expect(metadata?.creationDate != nil, "File metadata should include creation date when the filesystem provides it.")
+    try expect(metadata?.author?.isEmpty == false, "File metadata should include a local owner/author when available.")
+
+    let missingURL = directory.appendingPathComponent("missing.txt")
+    try expect(EditorFileIO.metadata(for: missingURL) == nil, "Missing files should not produce file metadata.")
+}
+
 func testLanguageInferenceAndOverride() throws {
     let jsonURL = URL(fileURLWithPath: "/tmp/sample.json")
     let dataURL = URL(fileURLWithPath: "/tmp/sample.data")
@@ -855,7 +872,7 @@ func testSQLLineCommentsRespectNonUnixLineEndings() throws {
 
     try expectSQLToken(carriageReturnText, "select", .keyword, "SQL line comments should end at carriage returns.")
     try expectSQLToken(carriageReturnText, "from", .keyword, "SQL should resume highlighting after carriage-return line comments.")
-    try expectSQLToken(carriageReturnText, "'XX'", .string, "SQL strings should highlight after carriage-return line comments.")
+    try expectSQLToken(carriageReturnText, "'XXX'", .string, "SQL strings should highlight after carriage-return line comments.")
 
     try expectSQLToken(windowsText, "insert", .keyword, "SQL line comments should end before Windows newlines.")
     try expectSQLToken(windowsText, "into", .keyword, "SQL should resume highlighting after Windows line comments.")
@@ -1282,6 +1299,7 @@ let tests: [(String, () throws -> Void)] = [
     ("close other tabs and language", testCloseOtherTabsAndLanguage),
     ("recently closed files stack", testRecentlyClosedFilesStack),
     ("save all documents", testSaveAllDocuments),
+    ("editor file metadata", testEditorFileMetadata),
     ("language inference and override", testLanguageInferenceAndOverride),
     ("window title", testWindowTitle),
     ("JSON tools", testJSONTools),

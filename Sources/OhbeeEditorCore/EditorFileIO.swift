@@ -1,5 +1,17 @@
 import Foundation
 
+public struct EditorFileMetadata: Equatable {
+    public let byteCount: Int64?
+    public let creationDate: Date?
+    public let author: String?
+
+    public init(byteCount: Int64?, creationDate: Date?, author: String?) {
+        self.byteCount = byteCount
+        self.creationDate = creationDate
+        self.author = author
+    }
+}
+
 public enum EditorFileError: LocalizedError {
     case unreadableText
 
@@ -56,6 +68,26 @@ public struct EditorFileIO {
 
     /// Returns the file size in bytes, or nil if the file attributes cannot be read.
     public static func byteCount(of fileURL: URL) -> Int? {
-        (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
+        guard let byteCount = metadata(for: fileURL)?.byteCount else { return nil }
+        return Int(byteCount)
+    }
+
+    /// Returns local filesystem metadata for a file-backed document, or nil when the file is unavailable.
+    public static func metadata(for fileURL: URL) -> EditorFileMetadata? {
+        guard FileManager.default.fileExists(atPath: fileURL.path),
+              let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path) else {
+            return nil
+        }
+
+        let size = (attrs[.size] as? NSNumber)?.int64Value
+        let created = attrs[.creationDate] as? Date
+        let ownerName = (attrs[.ownerAccountName] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let author = ownerName.flatMap { $0.isEmpty ? nil : $0 }
+
+        return EditorFileMetadata(
+            byteCount: size,
+            creationDate: created,
+            author: author
+        )
     }
 }

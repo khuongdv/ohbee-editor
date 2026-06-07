@@ -1008,6 +1008,7 @@ private struct DocumentInfoView: View {
     let text: String
 
     var body: some View {
+        let meta = document?.fileURL.flatMap { EditorFileIO.metadata(for: $0) }
         VStack(alignment: .leading, spacing: 10) {
             Text("Document Info")
                 .font(.headline)
@@ -1036,17 +1037,29 @@ private struct DocumentInfoView: View {
                     Text("Language").foregroundStyle(.secondary)
                     Text(language)
                 }
-                if let size = fileSize {
+                if let byteCount = meta?.byteCount {
                     GridRow {
                         Text("File size").foregroundStyle(.secondary)
-                        Text(size)
+                        Text(ByteCountFormatter.string(fromByteCount: byteCount, countStyle: .file))
+                    }
+                }
+                if let createdAt = meta?.creationDate {
+                    GridRow {
+                        Text("Created").foregroundStyle(.secondary)
+                        Text(createdAt.formatted(date: .abbreviated, time: .shortened))
+                    }
+                }
+                if let author = meta?.author {
+                    GridRow {
+                        Text("Author").foregroundStyle(.secondary)
+                        Text(author)
                     }
                 }
             }
             .font(.callout)
         }
         .padding(14)
-        .frame(minWidth: 220)
+        .frame(minWidth: 260)
     }
 
     private var lineCount: Int {
@@ -1065,13 +1078,6 @@ private struct DocumentInfoView: View {
 
     private var language: String {
         document?.effectiveLanguage.displayName ?? "Plain Text"
-    }
-
-    private var fileSize: String? {
-        guard let url = document?.fileURL,
-              let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let sizeNum = attrs[.size] as? NSNumber else { return nil }
-        return ByteCountFormatter.string(fromByteCount: sizeNum.int64Value, countStyle: .file)
     }
 }
 
