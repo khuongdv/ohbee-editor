@@ -4,6 +4,36 @@ All notable user-facing changes to Ohbee Editor are tracked here.
 
 This project follows small, practical releases. Version numbers are currently maintained manually in `Makefile`, `Support/Info.plist`, and `README.md`.
 
+## 1.1.8 - 2026-06-15
+
+### Added
+
+- Added a command palette for quick access to common local editor actions.
+- Added selection-aware text operations so supported transforms act on selected text first, with full-document fallback.
+- Added log cleanup tools for deterministic local cleanup of messy pasted logs.
+- Added a Wrap Text preference and menu toggle for switching between wrapped reading and horizontal scrolling.
+- Added file metadata to the Document Info popover.
+
+### Fixed
+
+- Fixed Safe Share review snippets so they no longer expose sensitive prefixes or suffixes.
+- Fixed SQL `--` line comment highlighting for pasted text with `CR` and `CRLF` line endings.
+- Fixed editor tab rendering so one tab visually matches four monospaced spaces.
+- Hardened editor UI crash paths around compare, image viewer, Safe Share, session restore, and tab/document state.
+- Fixed Wrap Text relayout so disabling wrap restores horizontal scrolling for long lines.
+
+### Improved
+
+- Improved shared editor operation handling for selected text, native undo, and status reporting.
+- Improved URL cleanup and extraction behavior around embedded URLs, unknown parameters, fragments, and punctuation.
+- Added convenience `make test` and `make selftest` targets for the executable self-test suite.
+- Added regression and smoke coverage for Safe Share snippets, URL cleanup, large search/replace, SQL line comments, and file metadata.
+
+### Release
+
+- Bumped app version to 1.1.8.
+- Bumped bundle build number to 13.
+
 ## 1.1.7 - 2026-05-26
 
 ### Fixed
