@@ -7,6 +7,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
     let language: EditorLanguage
     let documentID: EditorDocument.ID
     var showLineNumbers: Bool = true
+    var wordWrap: Bool = true
     var isLargeFile: Bool = false
     var isReadOnly: Bool = false
     var fontSize: CGFloat = NSFont.systemFontSize
@@ -24,7 +25,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
+        scrollView.hasHorizontalScroller = !wordWrap
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = true
@@ -52,16 +53,8 @@ struct HighlightedTextEditor: NSViewRepresentable {
         textView.isEditable = !isReadOnly
         textView.insertionPointColor = isReadOnly ? .clear : .controlAccentColor
         textView.textContainerInset = NSSize(width: 10, height: 10)
-        textView.minSize = NSSize(width: 0, height: 0)
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = true
-        textView.autoresizingMask = [.width]
-        textView.textContainer?.containerSize = NSSize(
-            width: CGFloat.greatestFiniteMagnitude,
-            height: CGFloat.greatestFiniteMagnitude
-        )
-        textView.textContainer?.widthTracksTextView = false
+        textView.configureWordWrap(wordWrap, in: scrollView)
         textView.string = text
 
         scrollView.documentView = textView
@@ -69,6 +62,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
         context.coordinator.language = language
         context.coordinator.isLargeFile = isLargeFile
         context.coordinator.fontSize = fontSize
+        context.coordinator.wordWrap = wordWrap
         context.coordinator.searchOptions = searchOptions
         context.coordinator.currentSearchMatchIndex = currentSearchMatchIndex
         context.coordinator.applyHighlighting(to: textView)
@@ -105,17 +99,30 @@ struct HighlightedTextEditor: NSViewRepresentable {
         let documentChanged = context.coordinator.documentID != documentID
         let languageChanged = context.coordinator.language != language
         let fontSizeChanged = context.coordinator.fontSize != fontSize
+        let wordWrapChanged = context.coordinator.wordWrap != wordWrap
         let searchChanged = context.coordinator.searchOptions != searchOptions
             || context.coordinator.currentSearchMatchIndex != currentSearchMatchIndex
         context.coordinator.documentID = documentID
         context.coordinator.language = language
         context.coordinator.isLargeFile = isLargeFile
         context.coordinator.fontSize = fontSize
+        context.coordinator.wordWrap = wordWrap
         context.coordinator.searchOptions = searchOptions
         context.coordinator.currentSearchMatchIndex = currentSearchMatchIndex
         EditorTextOperationCenter.shared.register(textView: textView, documentID: documentID)
         textView.isEditable = !isReadOnly
         textView.insertionPointColor = isReadOnly ? .clear : .controlAccentColor
+
+        if wordWrapChanged {
+            textView.configureWordWrap(wordWrap, in: scrollView)
+            textView.invalidateEditorLayout()
+            DispatchQueue.main.async {
+                guard textView.enclosingScrollView === scrollView else { return }
+                textView.configureWordWrap(wordWrap, in: scrollView)
+                textView.invalidateEditorLayout()
+                scrollView.verticalRulerView?.needsDisplay = true
+            }
+        }
 
         if effectiveShowLineNumbers {
             if !(scrollView.verticalRulerView is LineNumberRulerView) {
@@ -173,6 +180,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
         var isApplyingExternalText = false
         var isLargeFile: Bool = false
         var fontSize: CGFloat = NSFont.systemFontSize
+        var wordWrap: Bool = true
         var searchOptions = SearchOptions()
         var currentSearchMatchIndex: Int?
 
@@ -298,6 +306,49 @@ struct HighlightedTextEditor: NSViewRepresentable {
 
 private extension NSTextView {
     private static let editorTabWidthInSpaces = 4
+
+    func configureWordWrap(_ isEnabled: Bool, in scrollView: NSScrollView) {
+        scrollView.hasHorizontalScroller = !isEnabled
+        scrollView.tile()
+
+        let contentSize = scrollView.contentSize
+        minSize = NSSize(width: 0, height: 0)
+        maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        isHorizontallyResizable = !isEnabled
+        autoresizingMask = isEnabled ? [.width] : []
+
+        guard let textContainer else { return }
+        textContainer.widthTracksTextView = isEnabled
+        textContainer.containerSize = NSSize(
+            width: isEnabled ? max(1, contentSize.width) : CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+
+        if isEnabled {
+            let targetSize = NSSize(width: max(1, contentSize.width), height: max(bounds.height, contentSize.height))
+            setFrameSize(targetSize)
+            scrollView.contentView.setBoundsOrigin(NSPoint(x: 0, y: scrollView.contentView.bounds.origin.y))
+        } else {
+            layoutManager?.ensureLayout(for: textContainer)
+            let usedSize = layoutManager?.usedRect(for: textContainer).size ?? bounds.size
+            let targetSize = NSSize(
+                width: max(contentSize.width, ceil(usedSize.width + textContainerInset.width * 2)),
+                height: max(bounds.height, contentSize.height, ceil(usedSize.height + textContainerInset.height * 2))
+            )
+            setFrameSize(targetSize)
+        }
+    }
+
+    func invalidateEditorLayout() {
+        guard let textContainer else { return }
+        let fullRange = NSRange(location: 0, length: (string as NSString).length)
+        layoutManager?.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
+        layoutManager?.ensureLayout(for: textContainer)
+        needsDisplay = true
+        if let scrollView = enclosingScrollView {
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+    }
 
     func applyEditorParagraphStyle(for font: NSFont) {
         let paragraphStyle = editorParagraphStyle(for: font)

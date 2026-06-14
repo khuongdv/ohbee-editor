@@ -769,6 +769,7 @@ private struct ScratchEditorView: View {
     let onSaveAs: () -> Bool
     let onFileDrop: ([URL]) -> Void
     @AppStorage("ohbee.lineNumbers") private var showLineNumbers = true
+    @AppStorage("ohbee.wordWrap") private var wordWrap = true
     @AppStorage("ohbee.fontSize") private var fontSize: Double = 13
 
     var body: some View {
@@ -812,6 +813,7 @@ private struct ScratchEditorView: View {
                 language: document.effectiveLanguage,
                 documentID: document.id,
                 showLineNumbers: showLineNumbers,
+                wordWrap: wordWrap,
                 isLargeFile: document.isLargeFile,
                 isReadOnly: document.isReadOnly,
                 fontSize: CGFloat(fontSize),

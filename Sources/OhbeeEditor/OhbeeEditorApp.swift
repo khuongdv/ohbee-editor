@@ -14,6 +14,7 @@ struct OhbeeEditorApp: App {
     @State private var isCommandPaletteVisible = false
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("ohbee.lineNumbers") private var showLineNumbers = true
+    @AppStorage("ohbee.wordWrap") private var wordWrap = true
     @AppStorage("ohbee.fontSize") private var fontSize: Double = 13
 
     var body: some Scene {
@@ -200,6 +201,7 @@ struct OhbeeEditorApp: App {
                 }
 
                 Toggle("Show Line Numbers", isOn: $showLineNumbers)
+                Toggle("Wrap Text", isOn: $wordWrap)
 
                 Divider()
 
