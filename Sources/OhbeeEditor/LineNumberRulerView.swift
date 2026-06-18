@@ -62,9 +62,13 @@ final class LineNumberRulerView: NSRulerView {
         let charCount = textView.map { ($0.string as NSString).length } ?? 0
         if charCount <= Self.rebuildCharacterThreshold {
             rebuildLineMap()
-            updateRuleThicknessIfNeeded()
         }
         needsDisplay = true
+        // Defer ruler thickness update to avoid triggering a layout pass while
+        // the text storage is still being edited (causes NSRangeException crash).
+        DispatchQueue.main.async { [weak self] in
+            self?.updateRuleThicknessIfNeeded()
+        }
     }
 
     @objc private func scrolled() { needsDisplay = true }
@@ -75,10 +79,11 @@ final class LineNumberRulerView: NSRulerView {
     }
 
     private func updateRuleThicknessIfNeeded() {
+        guard let scrollView, textView != nil else { return }
         let newWidth = gutterWidth(for: lineMap?.lineCount ?? 1)
         guard abs(ruleThickness - newWidth) > 0.5 else { return }
         ruleThickness = newWidth
-        scrollView?.tile()
+        scrollView.tile()
     }
 
     private func gutterWidth(for lineCount: Int) -> CGFloat {
