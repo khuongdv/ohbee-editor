@@ -13,11 +13,29 @@ struct ContentView: View {
     @State private var showWordFrequency = false
     @State private var wordFrequencySnapshot: [WordFrequencyEntry] = []
     @State private var showCompare = false
+    @State private var showReportIssue = false
     @State private var safeShareReview: SafeShareReview?
     @State private var draggingDocumentID: EditorDocument.ID?
     @State private var lineFilterRequest: LineFilterRequest?
     @State private var commandPaletteActions: [CommandPaletteAction] = []
+    @State private var statusBarWidth: CGFloat = 0
     @FocusState private var searchFieldFocused: Bool
+
+    // Status bar responsive breakpoints (measured width of the status bar).
+    // Below each threshold, the matching group of controls is hidden because
+    // every status bar action is also reachable from the menu bar.
+    private let statusBarSecondaryButtonsMinWidth: CGFloat = 900
+    private let statusBarExtraMenusMinWidth: CGFloat = 820
+
+    // Word Frequency and Compare are the first to go when space is tight.
+    private var showsStatusBarSecondaryButtons: Bool {
+        statusBarWidth == 0 || statusBarWidth >= statusBarSecondaryButtonsMinWidth
+    }
+
+    // Log, XML, and Hash are niche menus hidden when the window gets narrow.
+    private var showsStatusBarExtraMenus: Bool {
+        statusBarWidth == 0 || statusBarWidth >= statusBarExtraMenusMinWidth
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -374,20 +392,22 @@ struct ContentView: View {
             .controlSize(.small)
             .font(.caption)
 
-            Menu("Log") {
-                Button("Keep Lines Containing…") {
-                    presentLineFilter(.keep)
+            if showsStatusBarExtraMenus {
+                Menu("Log") {
+                    Button("Keep Lines Containing…") {
+                        presentLineFilter(.keep)
+                    }
+                    Button("Remove Lines Containing…") {
+                        presentLineFilter(.remove)
+                    }
+                    Divider()
+                    transformButton("Extract URLs", LogCleanupTools.extractURLs)
+                    transformButton("Extract IPv4 Addresses", LogCleanupTools.extractIPv4Addresses)
+                    transformButton("Remove Timestamp Prefixes", LogCleanupTools.removeTimestampPrefixes)
                 }
-                Button("Remove Lines Containing…") {
-                    presentLineFilter(.remove)
-                }
-                Divider()
-                transformButton("Extract URLs", LogCleanupTools.extractURLs)
-                transformButton("Extract IPv4 Addresses", LogCleanupTools.extractIPv4Addresses)
-                transformButton("Remove Timestamp Prefixes", LogCleanupTools.removeTimestampPrefixes)
+                .controlSize(.small)
+                .font(.caption)
             }
-            .controlSize(.small)
-            .font(.caption)
 
             Menu("JSON") {
                 transformButton("Format JSON", JSONTools.format)
@@ -407,13 +427,15 @@ struct ContentView: View {
             .font(.caption)
             .disabled(!store.selectedDocumentSupportsJSONTools)
 
-            Menu("XML") {
-                transformButton("Format XML", XMLTools.format)
-                transformButton("Minify XML", XMLTools.minify)
+            if showsStatusBarExtraMenus {
+                Menu("XML") {
+                    transformButton("Format XML", XMLTools.format)
+                    transformButton("Minify XML", XMLTools.minify)
+                }
+                .controlSize(.small)
+                .font(.caption)
+                .disabled(!store.selectedDocumentSupportsXMLTools)
             }
-            .controlSize(.small)
-            .font(.caption)
-            .disabled(!store.selectedDocumentSupportsXMLTools)
 
             Menu("URL") {
                 transformButton("URL Encode", URLTools.encode)
@@ -423,26 +445,28 @@ struct ContentView: View {
             .controlSize(.small)
             .font(.caption)
 
-            Menu("Hash") {
-                Button("SHA-256") {
-                    EditorTextOperationCenter.shared.inspectText(named: "SHA-256", store: store) { text in
-                        if let hash = ChecksumTools.sha256(of: text) {
-                            return (hash, .neutral)
+            if showsStatusBarExtraMenus {
+                Menu("Hash") {
+                    Button("SHA-256") {
+                        EditorTextOperationCenter.shared.inspectText(named: "SHA-256", store: store) { text in
+                            if let hash = ChecksumTools.sha256(of: text) {
+                                return (hash, .neutral)
+                            }
+                            return ("Cannot compute SHA-256.", .warning)
                         }
-                        return ("Cannot compute SHA-256.", .warning)
+                    }
+                    Button("MD5") {
+                        EditorTextOperationCenter.shared.inspectText(named: "MD5", store: store) { text in
+                            if let hash = ChecksumTools.md5(of: text) {
+                                return (hash, .neutral)
+                            }
+                            return ("Cannot compute MD5.", .warning)
+                        }
                     }
                 }
-                Button("MD5") {
-                    EditorTextOperationCenter.shared.inspectText(named: "MD5", store: store) { text in
-                        if let hash = ChecksumTools.md5(of: text) {
-                            return (hash, .neutral)
-                        }
-                        return ("Cannot compute MD5.", .warning)
-                    }
-                }
+                .controlSize(.small)
+                .font(.caption)
             }
-            .controlSize(.small)
-            .font(.caption)
 
             Menu("Safe Share") {
                 Button("Review Safe Share…") {
@@ -471,40 +495,42 @@ struct ContentView: View {
 
             Spacer()
 
-            Button {
-                wordFrequencySnapshot = WordFrequencyTools.topWords(in: store.selectedDocument?.text ?? "")
-                showWordFrequency.toggle()
-            } label: {
-                Image(systemName: "chart.bar.xaxis")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel("Word Frequency")
-            }
-            .buttonStyle(.borderless)
-            .help("Word Frequency")
-            .popover(isPresented: $showWordFrequency, arrowEdge: .top) {
-                WordFrequencyView(entries: wordFrequencySnapshot)
-            }
+            if showsStatusBarSecondaryButtons {
+                Button {
+                    wordFrequencySnapshot = WordFrequencyTools.topWords(in: store.selectedDocument?.text ?? "")
+                    showWordFrequency.toggle()
+                } label: {
+                    Image(systemName: "chart.bar.xaxis")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Word Frequency")
+                }
+                .buttonStyle(.borderless)
+                .help("Word Frequency")
+                .popover(isPresented: $showWordFrequency, arrowEdge: .top) {
+                    WordFrequencyView(entries: wordFrequencySnapshot)
+                }
 
-            Button {
-                showCompare = true
-            } label: {
-                Image(systemName: "arrow.left.arrow.right")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel("Compare Tabs")
-            }
-            .buttonStyle(.borderless)
-            .help("Compare Tabs")
-            .disabled(store.documents.count < 2)
-            .sheet(isPresented: $showCompare) {
-                CompareTabsSheet(
-                    documents: store.documents,
-                    isPresented: $showCompare,
-                    onCompare: { baseID, changedID in
-                        store.openDiffTab(baseID: baseID, changedID: changedID)
-                    }
-                )
+                Button {
+                    showCompare = true
+                } label: {
+                    Image(systemName: "arrow.left.arrow.right")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Compare Tabs")
+                }
+                .buttonStyle(.borderless)
+                .help("Compare Tabs")
+                .disabled(store.documents.count < 2)
+                .sheet(isPresented: $showCompare) {
+                    CompareTabsSheet(
+                        documents: store.documents,
+                        isPresented: $showCompare,
+                        onCompare: { baseID, changedID in
+                            store.openDiffTab(baseID: baseID, changedID: changedID)
+                        }
+                    )
+                }
             }
 
             Button {
@@ -520,10 +546,45 @@ struct ContentView: View {
             .popover(isPresented: $showDocInfo, arrowEdge: .top) {
                 DocumentInfoView(document: store.selectedDocument, text: store.selectedDocument?.text ?? "")
             }
+
+            Button {
+                showReportIssue = true
+            } label: {
+                Image(systemName: "exclamationmark.bubble")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Report Issue")
+            }
+            .buttonStyle(.borderless)
+            .help("Report Issue")
+            .confirmationDialog(
+                "Report an Issue",
+                isPresented: $showReportIssue,
+                titleVisibility: .visible
+            ) {
+                Button("Email hi@ohbee.link") {
+                    openReportEmail()
+                }
+                Button("Open a Pull Request on GitHub") {
+                    openReportGitHub()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Help us improve Ohbee Editor. Choose how you'd like to report the issue.")
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
         .background(.bar)
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { statusBarWidth = proxy.size.width }
+                    .onChange(of: proxy.size.width) { newWidth in
+                        statusBarWidth = newWidth
+                    }
+            }
+        )
     }
 
     private var statusColor: Color {
@@ -538,6 +599,20 @@ struct ContentView: View {
             return colorScheme == .dark
                 ? Color(red: 1.0, green: 0.58, blue: 0.22)
                 : Color(red: 0.72, green: 0.32, blue: 0.0)
+        }
+    }
+
+    private func openReportEmail() {
+        let subject = "Ohbee Editor Issue Report"
+        let encodedSubject = subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? subject
+        if let url = URL(string: "mailto:hi@ohbee.link?subject=\(encodedSubject)") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func openReportGitHub() {
+        if let url = URL(string: "https://github.com/ohbee-labs/ohbee-editor") {
+            NSWorkspace.shared.open(url)
         }
     }
 
