@@ -120,8 +120,10 @@ struct ContentView: View {
                         TabItemView(
                             document: document,
                             isSelected: store.selectedDocumentID == document.id,
-                            tooltip: document.fileURL?.path ?? document.title,
-                            action: { store.selectDocument(document.id) },
+                            tooltip: document.isMissingFile
+                                ? "Original file was deleted: \(document.fileURL?.path ?? document.title)"
+                                : (document.fileURL?.path ?? document.title),
+                            action: { handleTabTap(document) },
                             closeAction: { closeTabWithWarning(document.id) }
                         )
                         .onDrag {
@@ -772,8 +774,24 @@ struct ContentView: View {
         closeTabWithWarning(selectedDocumentID)
     }
 
+    private func handleTabTap(_ document: EditorDocument) {
+        if document.isMissingFile {
+            if MissingFileWarning.confirmRemoval(document) {
+                store.discardMissingDocument(document.id)
+            }
+            return
+        }
+
+        store.selectDocument(document.id)
+    }
+
     private func closeTabWithWarning(_ id: EditorDocument.ID) {
         guard let document = store.documents.first(where: { $0.id == id }) else {
+            return
+        }
+
+        if document.isMissingFile {
+            store.discardMissingDocument(id)
             return
         }
 
@@ -1030,9 +1048,14 @@ private struct TabItemView: View {
                         .fontWeight(isSelected ? .medium : .regular)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                        .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                        .strikethrough(document.isMissingFile, color: .red)
+                        .foregroundStyle(titleColor)
 
-                    if document.isReadOnly {
+                    if document.isMissingFile {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 7, weight: .semibold))
+                            .foregroundStyle(Color.red)
+                    } else if document.isReadOnly {
                         Image(systemName: "lock.fill")
                             .font(.system(size: 7, weight: .semibold))
                             .foregroundStyle(Color.secondary.opacity(isSelected ? 0.8 : 0.5))
@@ -1068,6 +1091,13 @@ private struct TabItemView: View {
                 .fill(tabBackground)
         }
         .onHover { isHovering = $0 }
+    }
+
+    private var titleColor: Color {
+        if document.isMissingFile {
+            return .red
+        }
+        return isSelected ? Color.primary : Color.secondary
     }
 
     private var tabBackground: Color {

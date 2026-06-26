@@ -386,6 +386,11 @@ struct OhbeeEditorApp: App {
             return
         }
 
+        if document.isMissingFile {
+            store.discardMissingDocument(selectedDocumentID)
+            return
+        }
+
         switch UnsavedTabWarning.closeDecision(for: [document]) {
         case .closeWithoutSaving:
             store.closeDocument(selectedDocumentID)

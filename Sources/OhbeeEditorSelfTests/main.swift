@@ -1271,6 +1271,156 @@ func testIsLargeFileNotPersistedInSession() throws {
     try expect(loaded?.documents.first?.isLargeFile == false, "isLargeFile should not be persisted; it must default to false on decode.")
 }
 
+func testMissingBackingFileDetectedOnInit() throws {
+    let now = Date()
+    let missing = EditorDocument(
+        id: UUID(),
+        title: "gone.txt",
+        text: "",
+        fileURL: URL(fileURLWithPath: "/tmp/ohbee-missing-\(UUID().uuidString).txt"),
+        isScratch: false,
+        isDirty: false,
+        createdAt: now,
+        updatedAt: now
+    )
+    let scratch = EditorDocument.scratch(index: 1)
+
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let presentURL = directory.appendingPathComponent("present.txt")
+    try "hello".write(to: presentURL, atomically: true, encoding: .utf8)
+    let present = EditorDocument(
+        id: UUID(),
+        title: "present.txt",
+        text: "",
+        fileURL: presentURL,
+        isScratch: false,
+        isDirty: false,
+        createdAt: now,
+        updatedAt: now
+    )
+
+    let store = EditorStore(
+        documents: [missing, scratch, present],
+        selectedDocumentID: missing.id,
+        sessionStore: NoopSessionStore()
+    )
+
+    try expect(
+        store.documents.first { $0.id == missing.id }?.isMissingFile == true,
+        "A clean file-backed tab whose file is gone should be flagged as missing."
+    )
+    try expect(
+        store.documents.first { $0.id == scratch.id }?.isMissingFile == false,
+        "Scratch tabs should never be flagged as missing."
+    )
+    try expect(
+        store.documents.first { $0.id == present.id }?.isMissingFile == false,
+        "A file-backed tab whose file still exists should not be flagged as missing."
+    )
+}
+
+func testDirtyFileBackedNotFlaggedWhenFileMissing() throws {
+    let now = Date()
+    let dirty = EditorDocument(
+        id: UUID(),
+        title: "draft.txt",
+        text: "unsaved work",
+        fileURL: URL(fileURLWithPath: "/tmp/ohbee-missing-\(UUID().uuidString).txt"),
+        isScratch: false,
+        isDirty: true,
+        createdAt: now,
+        updatedAt: now
+    )
+
+    let store = EditorStore(
+        documents: [dirty],
+        selectedDocumentID: dirty.id,
+        sessionStore: NoopSessionStore()
+    )
+
+    try expect(
+        store.documents.first?.isMissingFile == false,
+        "A dirty file-backed tab keeps its in-session content and must not be flagged as missing."
+    )
+}
+
+func testDiscardMissingDocument() throws {
+    let now = Date()
+    let missing = EditorDocument(
+        id: UUID(),
+        title: "gone.txt",
+        text: "",
+        fileURL: URL(fileURLWithPath: "/tmp/ohbee-missing-\(UUID().uuidString).txt"),
+        isScratch: false,
+        isDirty: false,
+        createdAt: now,
+        updatedAt: now
+    )
+    let scratch = EditorDocument.scratch(index: 1)
+    let store = EditorStore(
+        documents: [missing, scratch],
+        selectedDocumentID: missing.id,
+        sessionStore: NoopSessionStore()
+    )
+    try expect(store.documents.first { $0.id == missing.id }?.isMissingFile == true, "Setup: missing tab should be flagged.")
+
+    store.discardMissingDocument(missing.id)
+    try expect(!store.documents.contains { $0.id == missing.id }, "Discarding a missing tab should remove it.")
+    try expect(store.selectedDocumentID == scratch.id, "Discarding the selected missing tab should select a remaining tab.")
+    if let missingURL = missing.fileURL {
+        try expect(
+            !store.recentlyClosedFileURLs.contains(missingURL),
+            "A missing file should not be recorded as recently closed because it cannot be reopened."
+        )
+    }
+
+    let onlyMissing = EditorDocument(
+        id: UUID(),
+        title: "gone2.txt",
+        text: "",
+        fileURL: URL(fileURLWithPath: "/tmp/ohbee-missing-\(UUID().uuidString).txt"),
+        isScratch: false,
+        isDirty: false,
+        createdAt: now,
+        updatedAt: now
+    )
+    let soloStore = EditorStore(
+        documents: [onlyMissing],
+        selectedDocumentID: onlyMissing.id,
+        sessionStore: NoopSessionStore()
+    )
+    soloStore.discardMissingDocument(onlyMissing.id)
+    try expect(soloStore.documents.count == 1, "Discarding the last tab should leave one fresh note.")
+    try expect(soloStore.documents.first?.isScratch == true, "The replacement tab should be a scratch note.")
+    try expect(soloStore.selectedDocument != nil, "There should always be a selected document.")
+}
+
+func testEditingMissingDocumentClearsFlag() throws {
+    let now = Date()
+    let missing = EditorDocument(
+        id: UUID(),
+        title: "gone.txt",
+        text: "",
+        fileURL: URL(fileURLWithPath: "/tmp/ohbee-missing-\(UUID().uuidString).txt"),
+        isScratch: false,
+        isDirty: false,
+        createdAt: now,
+        updatedAt: now
+    )
+    let store = EditorStore(
+        documents: [missing],
+        selectedDocumentID: missing.id,
+        sessionStore: NoopSessionStore()
+    )
+    try expect(store.documents.first?.isMissingFile == true, "Setup: missing tab should be flagged.")
+
+    store.textBinding(for: missing.id).wrappedValue = "typed content"
+    try expect(store.documents.first?.isMissingFile == false, "Editing a missing-file tab should clear the missing flag.")
+    try expect(store.documents.first?.isDirty == true, "Editing should mark the tab dirty so it follows the unsaved-changes flow.")
+}
+
 let tests: [(String, () throws -> Void)] = [
     ("file size policy classification", testFileSizePolicyClassification),
     ("session text: clean file-backed omits text", testSessionTextForCleanFileBacked),
@@ -1282,6 +1432,10 @@ let tests: [(String, () throws -> Void)] = [
     ("session round-trip strips file-backed text", testFileSizeSessionRoundTrip),
     ("large session text sidecar round-trip", testLargeSessionTextSidecarRoundTrip),
     ("isLargeFile not persisted in session", testIsLargeFileNotPersistedInSession),
+    ("missing backing file detected on init", testMissingBackingFileDetectedOnInit),
+    ("dirty file-backed not flagged when file missing", testDirtyFileBackedNotFlaggedWhenFileMissing),
+    ("discard missing document", testDiscardMissingDocument),
+    ("editing missing document clears flag", testEditingMissingDocumentClearsFlag),
     ("save and load session", testSaveAndLoadSession),
     ("missing session returns nil", testMissingSessionReturnsNil),
     ("trim trailing whitespace", testTrimTrailingWhitespace),

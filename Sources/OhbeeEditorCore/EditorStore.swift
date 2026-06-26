@@ -67,6 +67,10 @@ public final class EditorStore: ObservableObject {
             self.selectedDocumentID = initialDocuments[0].id
         }
 
+        // Flag file-backed tabs whose backing file no longer exists. Synchronous and cheap
+        // (a stat per document) so missing tabs render marked immediately, with no flash.
+        markMissingBackingFiles()
+
         // Restore text for file-backed documents whose text was not persisted in the session.
         // Deferred so init completes before async work begins.
         DispatchQueue.main.async { [weak self] in
@@ -228,6 +232,32 @@ public final class EditorStore: ObservableObject {
         saveSession()
     }
 
+    /// Removes a tab whose backing file no longer exists. The original content was never
+    /// persisted (clean file-backed text is re-read from disk), so there is nothing to keep
+    /// and no copy is written anywhere. The file is not recorded as recently closed because
+    /// it cannot be reopened.
+    public func discardMissingDocument(_ id: EditorDocument.ID) {
+        guard let index = documents.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+
+        let removedTitle = documents[index].title
+        documents.remove(at: index)
+
+        if documents.isEmpty {
+            let document = EditorDocument.scratch(index: 1)
+            documents = [document]
+            selectedDocumentID = document.id
+        } else if selectedDocumentID == id {
+            let nextIndex = min(index, documents.count - 1)
+            selectedDocumentID = documents[nextIndex].id
+        }
+
+        refreshCurrentMatch()
+        setStatus("Removed \(removedTitle): original file was deleted.", tone: .warning)
+        saveSession()
+    }
+
     public func closeOtherDocuments(keeping id: EditorDocument.ID) {
         guard let document = documents.first(where: { $0.id == id }) else {
             return
@@ -328,6 +358,10 @@ public final class EditorStore: ObservableObject {
         var document = documents[index]
         document.text = text
         document.isDirty = true
+        // The user has typed real content into this buffer. Even if the backing file was
+        // deleted, this tab now holds content worth keeping, so it follows the normal
+        // unsaved-changes flow instead of the missing-file removal flow.
+        document.isMissingFile = false
         document.updatedAt = Date()
         documents[index] = document
         refreshCurrentMatch()
@@ -942,6 +976,22 @@ public final class EditorStore: ObservableObject {
             return session
         } catch {
             return nil
+        }
+    }
+
+    /// Flags file-backed documents whose backing file no longer exists on disk.
+    /// Only clean, empty-text documents are flagged: their content was never persisted
+    /// (clean file-backed text is re-read from disk), so a deleted file means the content
+    /// is unrecoverable. Dirty documents keep their in-session content and are never flagged.
+    private func markMissingBackingFiles() {
+        for index in documents.indices {
+            let document = documents[index]
+            guard let fileURL = document.fileURL, !document.isDirty, document.text.isEmpty else {
+                continue
+            }
+            if !FileManager.default.fileExists(atPath: fileURL.path) {
+                documents[index].isMissingFile = true
+            }
         }
     }
 

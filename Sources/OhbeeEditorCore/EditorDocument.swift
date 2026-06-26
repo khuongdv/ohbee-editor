@@ -19,6 +19,11 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
     /// Set to true when the file on disk is not writable. Not persisted. Defaults to false on decode.
     public var isReadOnly: Bool = false
 
+    /// Set to true when a file-backed document's backing file no longer exists on disk.
+    /// Clean file-backed text is never persisted (it is re-read from disk on restore), so a
+    /// missing file means the content is unrecoverable. Not persisted. Defaults to false on decode.
+    public var isMissingFile: Bool = false
+
     public static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "webp", "bmp", "svg"]
 
     public var isImageFile: Bool {
@@ -42,7 +47,8 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
         language: EditorLanguage? = nil,
         sessionTextFileName: String? = nil,
         isLargeFile: Bool = false,
-        isReadOnly: Bool = false
+        isReadOnly: Bool = false,
+        isMissingFile: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -56,6 +62,7 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
         self.sessionTextFileName = sessionTextFileName
         self.isLargeFile = isLargeFile
         self.isReadOnly = isReadOnly
+        self.isMissingFile = isMissingFile
     }
 
     public var effectiveLanguage: EditorLanguage {
@@ -77,7 +84,7 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
         )
     }
 
-    // isLargeFile and isReadOnly are intentionally excluded: runtime classifications, not document identity.
+    // isLargeFile, isReadOnly, and isMissingFile are intentionally excluded: runtime classifications, not document identity.
     public static func == (lhs: EditorDocument, rhs: EditorDocument) -> Bool {
         lhs.id == rhs.id &&
         lhs.title == rhs.title &&
