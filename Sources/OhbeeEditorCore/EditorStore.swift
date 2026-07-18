@@ -372,12 +372,6 @@ public final class EditorStore: ObservableObject {
     /// file is read on a background thread, then the text is delivered on the main thread.
     /// Image files (png/jpg/jpeg/webp/bmp/svg) skip text loading and are shown in ImageViewerView.
     public func openDocument(from fileURL: URL) {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            removeRecentFile(fileURL)
-            setStatus("File no longer exists and has been removed from recents: \(fileURL.lastPathComponent)", tone: .warning)
-            return
-        }
-
         if let existing = documents.first(where: { $0.fileURL == fileURL }) {
             selectedDocumentID = existing.id
             currentMatchIndex = nil
@@ -472,6 +466,10 @@ public final class EditorStore: ObservableObject {
                     self.documents.removeAll { $0.id == docID }
                     if self.selectedDocumentID == docID {
                         self.selectedDocumentID = self.documents.last?.id
+                    }
+                    // If the file no longer exists, clean it from recents
+                    if !FileManager.default.fileExists(atPath: fileURL.path) {
+                        self.removeRecentFile(fileURL)
                     }
                     self.setStatus("Could not open file: \(error.localizedDescription)", tone: .warning)
                 }

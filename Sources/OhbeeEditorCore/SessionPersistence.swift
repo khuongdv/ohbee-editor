@@ -65,16 +65,31 @@ public final class LocalSessionStore: SessionPersisting {
         return session
     }
 
+    /// Owner-only file permissions (rw-------) to protect potentially sensitive session content.
+    private static let restrictedFilePermissions: Int16 = 0o600
+    /// Owner-only directory permissions (rwx------).
+    private static let restrictedDirectoryPermissions: Int16 = 0o700
+
     public func saveSession(_ session: EditorSession) throws {
         let directoryURL = fileURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(
             at: directoryURL,
             withIntermediateDirectories: true
         )
+        // Restrict the session directory so other local users cannot browse it
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: Self.restrictedDirectoryPermissions],
+            ofItemAtPath: directoryURL.path
+        )
 
         let sessionToWrite = try sessionExternalizingLargeText(session)
         let data = try encoder.encode(sessionToWrite)
         try data.write(to: fileURL, options: [.atomic])
+        // Restrict the session file to owner-only read/write
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: Self.restrictedFilePermissions],
+            ofItemAtPath: fileURL.path
+        )
     }
 
     private func sessionExternalizingLargeText(_ session: EditorSession) throws -> EditorSession {
@@ -91,6 +106,10 @@ public final class LocalSessionStore: SessionPersisting {
                 at: sidecarDirectoryURL,
                 withIntermediateDirectories: true
             )
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: Self.restrictedDirectoryPermissions],
+                ofItemAtPath: sidecarDirectoryURL.path
+            )
 
             let fileName = "\(sessionToWrite.documents[index].id.uuidString).txt"
             let textURL = sidecarDirectoryURL.appendingPathComponent(fileName, isDirectory: false)
@@ -98,6 +117,10 @@ public final class LocalSessionStore: SessionPersisting {
                 to: textURL,
                 atomically: true,
                 encoding: .utf8
+            )
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: Self.restrictedFilePermissions],
+                ofItemAtPath: textURL.path
             )
             sessionToWrite.documents[index].text = ""
             sessionToWrite.documents[index].sessionTextFileName = fileName
