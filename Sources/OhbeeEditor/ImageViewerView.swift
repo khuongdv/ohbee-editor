@@ -5,6 +5,7 @@ import OhbeeEditorCore
 
 struct ImageViewerView: View {
     let document: EditorDocument
+    let store: EditorStore
 
     @State private var nsImage: NSImage?
     @State private var zoom: CGFloat = 1.0
@@ -20,6 +21,10 @@ struct ImageViewerView: View {
         }
         .onAppear(perform: load)
         .onChange(of: document.id) { _ in
+            load()
+        }
+        .onChange(of: document.requiresFileAuthorization) { requiresAuthorization in
+            guard !requiresAuthorization else { return }
             load()
         }
     }
@@ -171,11 +176,13 @@ struct ImageViewerView: View {
         nsImage = nil
         metadata = nil
         loadFailed = false
+        store.beginFileAccessOperation(at: url)
 
         DispatchQueue.global(qos: .userInitiated).async {
             let img = Self.downsampledImage(from: url)
             let meta = ImageFileMetadata.load(from: url)
             DispatchQueue.main.async {
+                defer { store.endFileAccessOperation(at: url) }
                 guard document.fileURL == url else { return }
                 if img == nil { self.loadFailed = true }
                 self.nsImage = img
@@ -188,6 +195,10 @@ struct ImageViewerView: View {
     // bitmaps into memory. Original pixel dimensions are preserved in ImageFileMetadata.
     // Falls back to NSImage(contentsOf:) for SVG and other formats CGImageSource can't decode.
     private static func downsampledImage(from url: URL, maxDimension: CGFloat = 4096) -> NSImage? {
+        guard let byteCount = EditorFileIO.byteCount(of: url),
+              byteCount <= LargeFilePolicy.maximumImageByteLimit(for: url) else {
+            return nil
+        }
         let options: [CFString: Any] = [
             kCGImageSourceThumbnailMaxPixelSize: maxDimension,
             kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -198,6 +209,9 @@ struct ImageViewerView: View {
            let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
             return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
         }
+        // The fallback may content-sniff vector formats regardless of extension. Never hand
+        // it a file larger than the strict SVG ceiling, even if header sniffing was inconclusive.
+        guard byteCount <= LargeFilePolicy.maximumSVGByteLimit else { return nil }
         return NSImage(contentsOf: url)
     }
 }

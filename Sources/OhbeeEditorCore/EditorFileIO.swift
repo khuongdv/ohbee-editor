@@ -90,4 +90,17 @@ public struct EditorFileIO {
             author: author
         )
     }
+
+    /// Detects SVG content independently of the filename so a renamed SVG cannot bypass
+    /// the stricter vector-image size policy before AppKit parses it.
+    public static func isLikelySVG(at fileURL: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return false }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 4096), !data.isEmpty else { return false }
+        var prefix = String(decoding: data, as: UTF8.self)
+        if prefix.hasPrefix("\u{feff}") { prefix.removeFirst() }
+        let lowered = prefix.lowercased()
+        return lowered.contains("<svg")
+            || (lowered.contains("<?xml") && lowered.contains("svg"))
+    }
 }

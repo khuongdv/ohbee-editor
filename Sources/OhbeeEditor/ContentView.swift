@@ -126,6 +126,8 @@ struct ContentView: View {
                             isSelected: store.selectedDocumentID == document.id,
                             tooltip: document.isMissingFile
                                 ? "Original file was deleted: \(document.fileURL?.path ?? document.title)"
+                                : document.requiresFileAuthorization
+                                    ? "Access required: select the file again to authorize it"
                                 : (document.fileURL?.path ?? document.title),
                             action: { handleTabTap(document) },
                             closeAction: { closeTabWithWarning(document.id) }
@@ -240,7 +242,6 @@ struct ContentView: View {
                 get: { store.searchOptions.query },
                 set: { query in
                     store.updateSearchQuery(query)
-                    selectCurrentSearchMatch()
                 }
             ))
             .textFieldStyle(.roundedBorder)
@@ -301,7 +302,6 @@ struct ContentView: View {
                 get: { store.searchOptions.usesRegex },
                 set: { enabled in
                     store.setRegexSearchEnabled(enabled)
-                    selectCurrentSearchMatch()
                 }
             ))
             .toggleStyle(.checkbox)
@@ -340,6 +340,10 @@ struct ContentView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(.bar)
+        .onChange(of: store.searchSummary) { summary in
+            guard summary.currentMatchIndex != nil else { return }
+            selectCurrentSearchMatch()
+        }
     }
 
     private func focusSearchField() {
@@ -353,7 +357,7 @@ struct ContentView: View {
     private var editorArea: some View {
         if let document = store.selectedDocument {
             if document.isImageFile {
-                ImageViewerView(document: document)
+                ImageViewerView(document: document, store: store)
                     .id(document.id)
             } else {
                 ScratchEditorView(
@@ -361,6 +365,7 @@ struct ContentView: View {
                     text: store.textBinding(for: document.id),
                     searchOptions: store.searchOptions,
                     currentSearchMatchIndex: store.currentMatchIndex,
+                    searchMatchRanges: store.searchMatchRanges,
                     onSaveAs: saveAs,
                     onFileDrop: { urls in
                         for url in urls {
@@ -790,6 +795,10 @@ struct ContentView: View {
     }
 
     private func handleTabTap(_ document: EditorDocument) {
+        if document.requiresFileAuthorization {
+            requestFileAuthorization(for: document)
+            return
+        }
         if document.isMissingFile {
             if MissingFileWarning.confirmRemoval(document) {
                 store.discardMissingDocument(document.id)
@@ -798,6 +807,29 @@ struct ContentView: View {
         }
 
         store.selectDocument(document.id)
+    }
+
+    private func requestFileAuthorization(for document: EditorDocument) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.message = "Select \(document.title) to restore access."
+        panel.nameFieldStringValue = document.title
+        if panel.runModal() == .OK, let url = panel.url {
+            if let originalURL = document.fileURL,
+               originalURL.standardizedFileURL != url.standardizedFileURL {
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = "Use a different file location?"
+                alert.informativeText = "This will relink \(document.title) from \(originalURL.path) to \(url.path). Future saves will write to the selected file."
+                alert.addButton(withTitle: "Relink File")
+                alert.addButton(withTitle: "Cancel")
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+            }
+            store.reauthorizeDocument(document.id, with: url)
+            store.selectDocument(document.id)
+        }
     }
 
     private func closeTabWithWarning(_ id: EditorDocument.ID) {
@@ -874,6 +906,7 @@ private struct ScratchEditorView: View {
     @Binding var text: String
     let searchOptions: SearchOptions
     let currentSearchMatchIndex: Int?
+    let searchMatchRanges: [NSRange]
     let onSaveAs: () -> Bool
     let onFileDrop: ([URL]) -> Void
     @AppStorage("ohbee.lineNumbers") private var showLineNumbers = true
@@ -927,6 +960,7 @@ private struct ScratchEditorView: View {
                 fontSize: CGFloat(fontSize),
                 searchOptions: searchOptions,
                 currentSearchMatchIndex: currentSearchMatchIndex,
+                searchMatchRanges: searchMatchRanges,
                 onFileDrop: onFileDrop
             )
                 .background(Color(nsColor: .textBackgroundColor))
@@ -1066,7 +1100,7 @@ private struct TabItemView: View {
                         .strikethrough(document.isMissingFile, color: .red)
                         .foregroundStyle(titleColor)
 
-                    if document.isMissingFile {
+                    if document.isMissingFile || document.requiresFileAuthorization {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 7, weight: .semibold))
                             .foregroundStyle(Color.red)
@@ -1111,6 +1145,9 @@ private struct TabItemView: View {
     private var titleColor: Color {
         if document.isMissingFile {
             return .red
+        }
+        if document.requiresFileAuthorization {
+            return .orange
         }
         return isSelected ? Color.primary : Color.secondary
     }

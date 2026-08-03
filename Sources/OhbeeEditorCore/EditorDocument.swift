@@ -11,6 +11,8 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
     public var updatedAt: Date
     public var language: EditorLanguage?
     public var sessionTextFileName: String?
+    /// Persistent access granted by a user-selected open/save panel when App Sandbox is enabled.
+    public var securityScopedBookmark: Data?
 
     /// Set to true when the file on disk exceeds LargeFilePolicy.normalByteLimit.
     /// Not persisted in the session. Defaults to false on decode.
@@ -24,6 +26,10 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
     /// missing file means the content is unrecoverable. Not persisted. Defaults to false on decode.
     public var isMissingFile: Bool = false
 
+    /// The file may still exist, but this sandboxed process needs the user to grant access again.
+    /// Runtime-only so older sessions decode without migration ceremony.
+    public var requiresFileAuthorization: Bool = false
+
     public static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "webp", "bmp", "svg"]
 
     public var isImageFile: Bool {
@@ -32,7 +38,7 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, text, fileURL, isScratch, isDirty, createdAt, updatedAt, language, sessionTextFileName
+        case id, title, text, fileURL, isScratch, isDirty, createdAt, updatedAt, language, sessionTextFileName, securityScopedBookmark
     }
 
     public init(
@@ -46,9 +52,11 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
         updatedAt: Date,
         language: EditorLanguage? = nil,
         sessionTextFileName: String? = nil,
+        securityScopedBookmark: Data? = nil,
         isLargeFile: Bool = false,
         isReadOnly: Bool = false,
-        isMissingFile: Bool = false
+        isMissingFile: Bool = false,
+        requiresFileAuthorization: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -60,9 +68,11 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
         self.updatedAt = updatedAt
         self.language = language
         self.sessionTextFileName = sessionTextFileName
+        self.securityScopedBookmark = securityScopedBookmark
         self.isLargeFile = isLargeFile
         self.isReadOnly = isReadOnly
         self.isMissingFile = isMissingFile
+        self.requiresFileAuthorization = requiresFileAuthorization
     }
 
     public var effectiveLanguage: EditorLanguage {
@@ -84,7 +94,7 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
         )
     }
 
-    // isLargeFile, isReadOnly, and isMissingFile are intentionally excluded: runtime classifications, not document identity.
+    // Runtime file classifications are intentionally excluded from document identity.
     public static func == (lhs: EditorDocument, rhs: EditorDocument) -> Bool {
         lhs.id == rhs.id &&
         lhs.title == rhs.title &&
@@ -95,6 +105,7 @@ public struct EditorDocument: Identifiable, Codable, Equatable {
         lhs.createdAt == rhs.createdAt &&
         lhs.updatedAt == rhs.updatedAt &&
         lhs.language == rhs.language &&
-        lhs.sessionTextFileName == rhs.sessionTextFileName
+        lhs.sessionTextFileName == rhs.sessionTextFileName &&
+        lhs.securityScopedBookmark == rhs.securityScopedBookmark
     }
 }

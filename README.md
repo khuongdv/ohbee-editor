@@ -86,8 +86,8 @@ Safe Share is conservative and best-effort. It helps notice likely sensitive tex
 git clone git@github.com:ohbee-labs/ohbee-editor.git
 cd ohbee-editor
 
-# Install to /Applications (recommended)
-make install
+# Install the signed, sandboxed app (recommended)
+make install DEVELOPER_ID="Developer ID Application: You (TEAMID)"
 
 # Or just build the bundle without installing
 make bundle
@@ -102,7 +102,8 @@ HTTPS clone URL: `https://github.com/ohbee-labs/ohbee-editor.git`
 | `make dev` | Run via `swift run` for development — no file type registration |
 | `make bundle` | Build release `.app` bundle in the project directory |
 | `make run` | Build release bundle and open it |
-| `make install` | Deploy to `/Applications` and register file type associations |
+| `make install` | Sign with App Sandbox entitlements, deploy to `/Applications`, and register file types |
+| `make install-dev` | Install an explicitly unsigned/unsandboxed local development bundle |
 | `make clean` | Remove build artifacts and unregister the local bundle |
 
 ## File Type Support

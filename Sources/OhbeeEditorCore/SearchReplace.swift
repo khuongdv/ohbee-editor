@@ -2,12 +2,18 @@ import Foundation
 
 public enum RegexSearchError: Error, LocalizedError {
     case patternTooLong
+    case patternNotSupported
+    case inputTooLarge
     case matchingTimedOut
 
     public var errorDescription: String? {
         switch self {
         case .patternTooLong:
             return "Regex pattern is too long (max 1000 characters)."
+        case .patternNotSupported:
+            return "Regex uses a high-risk construct. Quantified groups, lookarounds, and pattern backreferences are not supported."
+        case .inputTooLarge:
+            return "Regex search is limited to 300,000 UTF-16 characters."
         case .matchingTimedOut:
             return "Regex matching timed out. Simplify your pattern."
         }
@@ -40,14 +46,19 @@ public struct SearchSummary: Equatable {
     public var matchCount: Int
     public var currentMatchIndex: Int?
     public var hasInvalidRegex: Bool
+    public var errorMessage: String?
 
-    public init(matchCount: Int, currentMatchIndex: Int?, hasInvalidRegex: Bool = false) {
+    public init(matchCount: Int, currentMatchIndex: Int?, hasInvalidRegex: Bool = false, errorMessage: String? = nil) {
         self.matchCount = matchCount
         self.currentMatchIndex = currentMatchIndex
         self.hasInvalidRegex = hasInvalidRegex
+        self.errorMessage = errorMessage
     }
 
     public var displayText: String {
+        if let errorMessage {
+            return errorMessage
+        }
         if hasInvalidRegex {
             return "Invalid pattern"
         }
@@ -65,9 +76,61 @@ public enum SearchReplaceResult: Equatable {
     case failure(message: String)
 }
 
+public struct SearchEvaluation: Equatable {
+    public let summary: SearchSummary
+    public let ranges: [NSRange]
+}
+
 public enum SearchReplaceEngine {
+    private enum RegexMatchOutcome {
+        case matches([NSTextCheckingResult])
+        case inputTooLarge
+        case timedOut
+    }
     public static func matchRanges(in text: String, options: SearchOptions) -> [NSRange] {
         ranges(in: text, options: options)
+    }
+
+    public static func evaluate(in text: String, options: SearchOptions, currentMatchIndex: Int?) -> SearchEvaluation {
+        guard !options.query.isEmpty else {
+            return SearchEvaluation(summary: SearchSummary(matchCount: 0, currentMatchIndex: nil), ranges: [])
+        }
+        if options.usesRegex {
+            do {
+                let regex = try regularExpression(for: options)
+                let fullRange = NSRange(location: 0, length: (text as NSString).length)
+                switch regexMatchOutcome(regex: regex, in: text, range: fullRange) {
+                case .inputTooLarge:
+                    return SearchEvaluation(
+                        summary: SearchSummary(matchCount: 0, currentMatchIndex: nil, errorMessage: RegexSearchError.inputTooLarge.localizedDescription),
+                        ranges: []
+                    )
+                case .timedOut:
+                    return SearchEvaluation(
+                        summary: SearchSummary(matchCount: 0, currentMatchIndex: nil, errorMessage: RegexSearchError.matchingTimedOut.localizedDescription),
+                        ranges: []
+                    )
+                case let .matches(matches):
+                    let ranges = matches.map(\.range)
+                    let index = ranges.isEmpty ? nil : min(max(currentMatchIndex ?? 0, 0), ranges.count - 1)
+                    return SearchEvaluation(
+                        summary: SearchSummary(matchCount: ranges.count, currentMatchIndex: index),
+                        ranges: ranges
+                    )
+                }
+            } catch {
+                return SearchEvaluation(
+                    summary: SearchSummary(matchCount: 0, currentMatchIndex: nil, hasInvalidRegex: true, errorMessage: error.localizedDescription),
+                    ranges: []
+                )
+            }
+        }
+        let ranges = ranges(in: text, options: options)
+        let index = ranges.isEmpty ? nil : min(max(currentMatchIndex ?? 0, 0), ranges.count - 1)
+        return SearchEvaluation(
+            summary: SearchSummary(matchCount: ranges.count, currentMatchIndex: index),
+            ranges: ranges
+        )
     }
 
     public static func matchRanges(in text: String, options: SearchOptions, range: NSRange) -> [NSRange] {
@@ -96,9 +159,39 @@ public enum SearchReplaceEngine {
         options: SearchOptions,
         currentMatchIndex: Int?
     ) -> SearchSummary {
-        if options.usesRegex, !options.query.isEmpty,
-           (try? regularExpression(for: options)) == nil {
-            return SearchSummary(matchCount: 0, currentMatchIndex: nil, hasInvalidRegex: true)
+        if options.usesRegex, !options.query.isEmpty {
+            let regex: NSRegularExpression
+            do {
+                regex = try regularExpression(for: options)
+            } catch {
+                return SearchSummary(
+                    matchCount: 0,
+                    currentMatchIndex: nil,
+                    hasInvalidRegex: true,
+                    errorMessage: error.localizedDescription
+                )
+            }
+            let fullRange = NSRange(location: 0, length: (text as NSString).length)
+            switch regexMatchOutcome(regex: regex, in: text, range: fullRange) {
+            case .inputTooLarge:
+                return SearchSummary(
+                    matchCount: 0,
+                    currentMatchIndex: nil,
+                    errorMessage: RegexSearchError.inputTooLarge.localizedDescription
+                )
+            case .timedOut:
+                return SearchSummary(
+                    matchCount: 0,
+                    currentMatchIndex: nil,
+                    errorMessage: RegexSearchError.matchingTimedOut.localizedDescription
+                )
+            case let .matches(matches):
+                guard !matches.isEmpty else {
+                    return SearchSummary(matchCount: 0, currentMatchIndex: nil)
+                }
+                let index = min(max(currentMatchIndex ?? 0, 0), matches.count - 1)
+                return SearchSummary(matchCount: matches.count, currentMatchIndex: index)
+            }
         }
 
         let matches = ranges(in: text, options: options)
@@ -167,34 +260,30 @@ public enum SearchReplaceEngine {
             return .failure(message: "Enter text to find.")
         }
 
-        if options.usesRegex || options.isWholeWord {
+        if options.usesRegex {
             do {
                 let regex = try regularExpression(for: options)
                 let range = NSRange(location: 0, length: (text as NSString).length)
-                if options.usesRegex {
-                    guard let results = timedMatches(regex: regex, in: text, range: range) else {
-                        return .failure(message: "Regex matching timed out. Simplify your pattern.")
-                    }
-                    let count = results.count
-                    // Use stringByReplacingMatches only after confirming matching completes in time
-                    let replaced = regex.stringByReplacingMatches(
-                        in: text,
-                        range: range,
-                        withTemplate: options.replacement
-                    )
-                    return .success(text: replaced, replacementCount: count)
-                } else {
-                    // Whole-word plain: literal replacement, no backreference expansion
-                    guard let results = timedMatches(regex: regex, in: text, range: range) else {
-                        return .failure(message: "Regex matching timed out. Simplify your pattern.")
-                    }
-                    let matchRanges = results.map(\.range)
-                    var result = text as NSString
-                    for r in matchRanges.reversed() {
-                        result = result.replacingCharacters(in: r, with: options.replacement) as NSString
-                    }
-                    return .success(text: result as String, replacementCount: matchRanges.count)
+                let results: [NSTextCheckingResult]
+                switch regexMatchOutcome(regex: regex, in: text, range: range) {
+                    case .inputTooLarge:
+                        return .failure(message: RegexSearchError.inputTooLarge.localizedDescription)
+                    case .timedOut:
+                        return .failure(message: RegexSearchError.matchingTimedOut.localizedDescription)
+                    case let .matches(matches):
+                        results = matches
                 }
+                var replaced = text as NSString
+                for match in results.reversed() {
+                        let replacement = regex.replacementString(
+                            for: match,
+                            in: text,
+                            offset: 0,
+                            template: options.replacement
+                        )
+                        replaced = replaced.replacingCharacters(in: match.range, with: replacement) as NSString
+                }
+                return .success(text: replaced as String, replacementCount: results.count)
             } catch let error as RegexSearchError {
                 return .failure(message: error.localizedDescription)
             } catch {
@@ -234,7 +323,7 @@ public enum SearchReplaceEngine {
             return []
         }
 
-        if options.usesRegex || options.isWholeWord {
+        if options.usesRegex {
             do {
                 let regex = try regularExpression(for: options)
                 guard let results = timedMatches(regex: regex, in: text, range: boundedRange) else {
@@ -244,6 +333,15 @@ public enum SearchReplaceEngine {
             } catch {
                 return []
             }
+        }
+
+        if options.isWholeWord {
+            return literalRanges(
+                in: source,
+                query: options.query,
+                range: boundedRange,
+                isCaseSensitive: options.isCaseSensitive
+            ).filter { isWholeWordRange($0, in: source) }
         }
 
         var ranges: [NSRange] = []
@@ -271,13 +369,43 @@ public enum SearchReplaceEngine {
         return ranges
     }
 
+    private static func literalRanges(
+        in source: NSString,
+        query: String,
+        range: NSRange,
+        isCaseSensitive: Bool
+    ) -> [NSRange] {
+        var results: [NSRange] = []
+        var searchRange = range
+        let compareOptions: NSString.CompareOptions = isCaseSensitive ? [] : [.caseInsensitive]
+        while searchRange.length > 0 {
+            let found = source.range(of: query, options: compareOptions, range: searchRange)
+            guard found.location != NSNotFound else { break }
+            results.append(found)
+            let next = NSMaxRange(found)
+            guard next < NSMaxRange(range) else { break }
+            searchRange = NSRange(location: next, length: NSMaxRange(range) - next)
+        }
+        return results
+    }
+
+    private static func isWholeWordRange(_ range: NSRange, in source: NSString) -> Bool {
+        let beforeIsWord = range.location > 0 && isWordCodeUnit(source.character(at: range.location - 1))
+        let end = NSMaxRange(range)
+        let afterIsWord = end < source.length && isWordCodeUnit(source.character(at: end))
+        return !beforeIsWord && !afterIsWord
+    }
+
+    private static func isWordCodeUnit(_ value: unichar) -> Bool {
+        guard value != 95 else { return true }
+        guard let scalar = UnicodeScalar(value) else { return false }
+        return CharacterSet.alphanumerics.contains(scalar)
+    }
+
     /// Maximum allowed length for a user-supplied regex pattern to mitigate
     /// catastrophic backtracking (ReDoS). Patterns exceeding this are rejected.
     private static let maxRegexPatternLength = 1000
-
-    /// Time limit for a single regex matching pass (seconds). If matching exceeds
-    /// this duration, the operation is abandoned and treated as zero matches.
-    static let regexMatchingTimeoutSeconds: TimeInterval = 2.0
+    private static let maxRegexInputLength = 300_000
 
     private static func regularExpression(for options: SearchOptions) throws -> NSRegularExpression {
         let regexOptions: NSRegularExpression.Options = options.isCaseSensitive ? [] : [.caseInsensitive]
@@ -291,40 +419,61 @@ public enum SearchReplaceEngine {
         guard pattern.count <= maxRegexPatternLength else {
             throw RegexSearchError.patternTooLong
         }
+        if options.usesRegex, containsHighRiskRegexConstruct(in: options.query) {
+            throw RegexSearchError.patternNotSupported
+        }
 
         return try NSRegularExpression(pattern: pattern, options: regexOptions)
     }
 
-    /// Performs regex matching with a timeout to prevent ReDoS from freezing the UI.
-    ///
-    /// NOTE: `workItem.cancel()` only sets the cancelled flag — it does not forcibly
-    /// terminate the regex engine. `NSRegularExpression` does not expose a cancellation
-    /// API. The background thread will continue until matching completes naturally.
-    /// The purpose of this timeout is to **unblock the caller** so the UI remains
-    /// responsive; the orphaned background work will finish on its own and the result
-    /// is discarded. On a single-user desktop app this is acceptable — one runaway
-    /// GCD task is not a security concern, only a temporary CPU cost.
+    /// Reject constructs that can introduce unbounded backtracking. This deliberately
+    /// keeps user regexes to a predictable subset suitable for synchronous UI search.
+    private static func containsHighRiskRegexConstruct(in pattern: String) -> Bool {
+        if pattern.range(of: #"\\[1-9]"#, options: .regularExpression) != nil {
+            return true
+        }
+        if pattern.contains("(?") {
+            return true
+        }
+        return pattern.range(of: #"\)(?:[*+?]|\{)"#, options: .regularExpression) != nil
+    }
+
+    /// Enumerates with ICU progress callbacks so pathological backtracking can be stopped
+    /// without leaving an uninterruptible background worker behind.
+    private static func regexMatchOutcome(
+        regex: NSRegularExpression,
+        in text: String,
+        range: NSRange
+    ) -> RegexMatchOutcome {
+        guard range.length <= maxRegexInputLength else { return .inputTooLarge }
+        let deadline = Date().addingTimeInterval(0.1)
+        var results: [NSTextCheckingResult] = []
+        var timedOut = false
+        regex.enumerateMatches(
+            in: text,
+            options: [.reportProgress],
+            range: range
+        ) { result, flags, stop in
+            if flags.contains(.progress), Date() >= deadline {
+                timedOut = true
+                stop.pointee = true
+                return
+            }
+            if let result {
+                results.append(result)
+            }
+        }
+        return timedOut ? .timedOut : .matches(results)
+    }
+
     static func timedMatches(
         regex: NSRegularExpression,
         in text: String,
         range: NSRange
     ) -> [NSTextCheckingResult]? {
-        var results: [NSTextCheckingResult]?
-        let semaphore = DispatchSemaphore(value: 0)
-
-        let workItem = DispatchWorkItem {
-            results = regex.matches(in: text, range: range)
-            semaphore.signal()
-        }
-
-        DispatchQueue.global(qos: .userInitiated).async(execute: workItem)
-        let outcome = semaphore.wait(timeout: .now() + regexMatchingTimeoutSeconds)
-
-        if outcome == .timedOut {
-            workItem.cancel()
+        guard case let .matches(results) = regexMatchOutcome(regex: regex, in: text, range: range) else {
             return nil
         }
-
         return results
     }
 

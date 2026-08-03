@@ -13,6 +13,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
     var fontSize: CGFloat = NSFont.systemFontSize
     var searchOptions = SearchOptions()
     var currentSearchMatchIndex: Int?
+    var searchMatchRanges: [NSRange] = []
     var onFileDrop: (([URL]) -> Void)? = nil
 
     /// Line numbers are disabled for large files to prevent per-keystroke full scans.
@@ -65,6 +66,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
         context.coordinator.wordWrap = wordWrap
         context.coordinator.searchOptions = searchOptions
         context.coordinator.currentSearchMatchIndex = currentSearchMatchIndex
+        context.coordinator.searchMatchRanges = searchMatchRanges
         context.coordinator.applyHighlighting(to: textView)
         EditorTextOperationCenter.shared.register(textView: textView, documentID: documentID)
         textView.onFileDrop = onFileDrop
@@ -102,6 +104,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
         let wordWrapChanged = context.coordinator.wordWrap != wordWrap
         let searchChanged = context.coordinator.searchOptions != searchOptions
             || context.coordinator.currentSearchMatchIndex != currentSearchMatchIndex
+            || context.coordinator.searchMatchRanges != searchMatchRanges
         context.coordinator.documentID = documentID
         context.coordinator.language = language
         context.coordinator.isLargeFile = isLargeFile
@@ -109,6 +112,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
         context.coordinator.wordWrap = wordWrap
         context.coordinator.searchOptions = searchOptions
         context.coordinator.currentSearchMatchIndex = currentSearchMatchIndex
+        context.coordinator.searchMatchRanges = searchMatchRanges
         EditorTextOperationCenter.shared.register(textView: textView, documentID: documentID)
         textView.isEditable = !isReadOnly
         textView.insertionPointColor = isReadOnly ? .clear : .controlAccentColor
@@ -183,6 +187,7 @@ struct HighlightedTextEditor: NSViewRepresentable {
         var wordWrap: Bool = true
         var searchOptions = SearchOptions()
         var currentSearchMatchIndex: Int?
+        var searchMatchRanges: [NSRange] = []
 
         private let highlighter = SimpleSyntaxHighlighter()
         private var pendingHighlight: DispatchWorkItem?
@@ -255,11 +260,13 @@ struct HighlightedTextEditor: NSViewRepresentable {
                 return
             }
 
-            let ranges = SearchReplaceEngine.matchRanges(
-                in: textView.string,
-                options: searchOptions,
-                range: limitedRange
-            )
+            let ranges = searchOptions.usesRegex
+                ? searchMatchRanges.filter { NSIntersectionRange($0, limitedRange).length > 0 }
+                : SearchReplaceEngine.matchRanges(
+                    in: textView.string,
+                    options: searchOptions,
+                    range: limitedRange
+                )
             let maxBackgroundMatches = shouldLimitSearchHighlights ? 600 : 2_000
             for range in ranges.prefix(maxBackgroundMatches) {
                 storage.addAttribute(

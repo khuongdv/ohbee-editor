@@ -112,12 +112,8 @@ final class EditorTextOperationCenter {
     func selectCurrentSearchMatch(store: EditorStore) {
         guard
             let textView = activeTextView(for: store),
-            let currentMatchIndex = store.currentMatchIndex,
-            let range = SearchReplaceEngine.matchRange(
-                in: textView.string,
-                options: store.searchOptions,
-                matchIndex: currentMatchIndex
-            )
+            store.currentMatchIndex != nil,
+            let range = store.currentSearchMatchRange
         else {
             return
         }
@@ -129,7 +125,7 @@ final class EditorTextOperationCenter {
     func replaceCurrentSearchMatch(store: EditorStore) {
         guard
             let textView = activeTextView(for: store),
-            let currentMatchIndex = store.currentMatchIndex
+            store.currentMatchIndex != nil
         else {
             store.replaceCurrentMatch()
             return
@@ -137,11 +133,7 @@ final class EditorTextOperationCenter {
 
         finalizeMarkedText(in: textView)
         guard
-            let range = SearchReplaceEngine.matchRange(
-                in: textView.string,
-                options: store.searchOptions,
-                matchIndex: currentMatchIndex
-            )
+            let range = store.currentSearchMatchRange
         else {
             store.replaceCurrentMatch()
             return

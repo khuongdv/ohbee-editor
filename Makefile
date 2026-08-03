@@ -5,7 +5,7 @@ VERSION       = 1.1.8
 LSREGISTER    = /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 DEVELOPER_ID ?= "Developer ID Application: Your Name (XXXXXXXXXX)"
 
-.PHONY: build test selftest bundle run dev install clean icon codesign notarize
+.PHONY: build test selftest bundle run dev install install-dev clean icon codesign notarize
 
 build:
 	swift build -c release
@@ -51,11 +51,17 @@ run: bundle
 dev:
 	swift run
 
-# Copy to /Applications and register file type associations with Finder
-install: bundle
+# Install the signed, sandboxed artifact. DEVELOPER_ID must name a valid signing identity.
+install: codesign
 	cp -R $(APP) /Applications/
 	$(LSREGISTER) -f "/Applications/Ohbee Editor.app"
-	@echo "Installed to /Applications/Ohbee Editor.app"
+	@echo "Installed signed sandboxed app to /Applications/Ohbee Editor.app"
+
+# Explicit local-development install. This artifact is unsigned and therefore not sandboxed.
+install-dev: bundle
+	cp -R $(APP) /Applications/
+	$(LSREGISTER) -f "/Applications/Ohbee Editor.app"
+	@echo "Installed unsigned development app (App Sandbox is not active)."
 
 icon:
 	mkdir -p /tmp/OhbeeAppIcon.iconset

@@ -145,6 +145,13 @@ public final class LocalSessionStore: SessionPersisting {
                 continue
             }
 
+            // The name is persisted state, not a path. Bind it to the document UUID so a
+            // tampered session cannot escape the private sidecar directory.
+            guard fileName == "\(session.documents[index].id.uuidString).txt" else {
+                session.documents[index].sessionTextFileName = nil
+                continue
+            }
+
             let textURL = sidecarDirectoryURL.appendingPathComponent(fileName, isDirectory: false)
             guard let text = try? String(contentsOf: textURL, encoding: .utf8) else {
                 continue
@@ -178,8 +185,40 @@ public final class LocalSessionStore: SessionPersisting {
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("Application Support", isDirectory: true)
 
-        return supportDirectory
+        let currentURL = supportDirectory
             .appendingPathComponent("Ohbee Editor", isDirectory: true)
             .appendingPathComponent("session.json")
+        migrateLegacyStoreIfNeeded(to: currentURL)
+        return currentURL
+    }
+
+    /// Moves the pre-sandbox Application Support state into the app container on first launch.
+    /// The narrowly scoped temporary entitlement in Support/Entitlements.plist permits reading
+    /// this one legacy directory; it can be removed after the supported migration window.
+    private static func migrateLegacyStoreIfNeeded(to currentFileURL: URL) {
+        let legacyDirectory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Ohbee Editor", isDirectory: true)
+        let currentDirectory = currentFileURL.deletingLastPathComponent()
+        _ = try? migrateLegacyStoreIfNeeded(from: legacyDirectory, to: currentDirectory)
+    }
+
+    @discardableResult
+    public static func migrateLegacyStoreIfNeeded(from legacyDirectory: URL, to currentDirectory: URL) throws -> Bool {
+        let manager = FileManager.default
+        let legacySession = legacyDirectory.appendingPathComponent("session.json")
+        let currentSession = currentDirectory.appendingPathComponent("session.json")
+        guard legacyDirectory.standardizedFileURL != currentDirectory.standardizedFileURL,
+              !manager.fileExists(atPath: currentSession.path),
+              manager.fileExists(atPath: legacySession.path) else { return false }
+
+        try manager.createDirectory(at: currentDirectory, withIntermediateDirectories: true)
+        let legacySidecars = legacyDirectory.appendingPathComponent("Session Text", isDirectory: true)
+        let currentSidecars = currentDirectory.appendingPathComponent("Session Text", isDirectory: true)
+        if manager.fileExists(atPath: legacySidecars.path), !manager.fileExists(atPath: currentSidecars.path) {
+            try manager.copyItem(at: legacySidecars, to: currentSidecars)
+        }
+        // Copy the manifest last; its presence is the migration completion marker.
+        try manager.copyItem(at: legacySession, to: currentSession)
+        return true
     }
 }

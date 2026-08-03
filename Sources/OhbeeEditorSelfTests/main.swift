@@ -68,6 +68,44 @@ func testMissingSessionReturnsNil() throws {
     try expect(loadedSession == nil, "Missing session should return nil.")
 }
 
+func testLegacySessionMigration() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let legacy = root.appendingPathComponent("legacy", isDirectory: true)
+    let current = root.appendingPathComponent("current", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(
+        at: legacy.appendingPathComponent("Session Text", isDirectory: true),
+        withIntermediateDirectories: true
+    )
+    try "session".write(to: legacy.appendingPathComponent("session.json"), atomically: true, encoding: .utf8)
+    try "scratch".write(
+        to: legacy.appendingPathComponent("Session Text/note.txt"),
+        atomically: true,
+        encoding: .utf8
+    )
+
+    let didMigrate = try LocalSessionStore.migrateLegacyStoreIfNeeded(from: legacy, to: current)
+    let migratedSession = try String(contentsOf: current.appendingPathComponent("session.json"), encoding: .utf8)
+    let migratedSidecar = try String(contentsOf: current.appendingPathComponent("Session Text/note.txt"), encoding: .utf8)
+    let didMigrateAgain = try LocalSessionStore.migrateLegacyStoreIfNeeded(from: legacy, to: current)
+    try expect(
+        didMigrate,
+        "A legacy session should migrate when the container has no session."
+    )
+    try expect(
+        migratedSession == "session",
+        "Migration should copy the session manifest."
+    )
+    try expect(
+        migratedSidecar == "scratch",
+        "Migration should copy large scratch sidecars before the manifest."
+    )
+    try expect(
+        !didMigrateAgain,
+        "Migration should not overwrite an existing container session."
+    )
+}
+
 func testTrimTrailingWhitespace() throws {
     let result = BasicTextTransforms.trimTrailingWhitespace("one  \ntwo\t\nthree")
 
@@ -262,8 +300,9 @@ func testRegexReplace() throws {
 
 func testSearchReplaceEdgeCases() throws {
     let invalidRegex = SearchOptions(query: #"("#, replacement: "", usesRegex: true, isCaseSensitive: true)
+    let invalidSummary = SearchReplaceEngine.summary(in: "abc", options: invalidRegex, currentMatchIndex: nil)
     try expect(
-        SearchReplaceEngine.summary(in: "abc", options: invalidRegex, currentMatchIndex: nil) == SearchSummary(matchCount: 0, currentMatchIndex: nil, hasInvalidRegex: true),
+        invalidSummary.hasInvalidRegex && invalidSummary.errorMessage != nil,
         "Invalid regex search should report an invalid pattern."
     )
     try expect(
@@ -294,6 +333,159 @@ func testSearchReplaceEdgeCases() throws {
         SearchReplaceEngine.summary(in: "Xin xin XIN", options: caseSensitive, currentMatchIndex: nil) == SearchSummary(matchCount: 1, currentMatchIndex: 0),
         "Case-sensitive search should only count exact-case matches."
     )
+}
+
+func testSearchCacheInvalidatesImmediately() throws {
+    var document = EditorDocument.scratch(index: 1)
+    document.text = "alpha beta alpha"
+    let store = EditorStore(
+        documents: [document],
+        selectedDocumentID: document.id,
+        sessionStore: NoopSessionStore(),
+        sessionSaveDebounceInterval: 0
+    )
+    store.updateSearchQuery("alpha")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    try expect(store.searchSummary.matchCount == 2, "Setup should publish alpha matches.")
+
+    store.updateSearchQuery("beta")
+    try expect(store.searchSummary.matchCount == 0, "Changing query should invalidate old matches synchronously.")
+    try expect(store.currentSearchMatchRange == nil, "A stale range must not remain replaceable during debounce.")
+
+    store.updateReplacement("replacement changed during evaluation")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    try expect(store.searchSummary.matchCount == 1, "Replacement changes must not discard a valid search evaluation.")
+}
+
+func testReauthorizationPreservesDirtyBuffer() throws {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).txt")
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+    try "disk text".write(to: fileURL, atomically: true, encoding: .utf8)
+    let now = Date()
+    let document = EditorDocument(
+        id: UUID(),
+        title: fileURL.lastPathComponent,
+        text: "unsaved buffer",
+        fileURL: fileURL,
+        isScratch: false,
+        isDirty: true,
+        createdAt: now,
+        updatedAt: now,
+        requiresFileAuthorization: true
+    )
+    let store = EditorStore(
+        documents: [document],
+        selectedDocumentID: document.id,
+        sessionStore: NoopSessionStore()
+    )
+    store.reauthorizeDocument(document.id, with: fileURL)
+    try expect(store.documents.first?.text == "unsaved buffer", "Reauthorization must not overwrite dirty session text from disk.")
+    try expect(store.documents.first?.isDirty == true, "Reauthorization must preserve dirty state.")
+}
+
+func testReauthorizationRejectsDifferentFile() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let expectedURL = root.appendingPathComponent("expected.txt")
+    let differentURL = root.appendingPathComponent("different.txt")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try "other file".write(to: differentURL, atomically: true, encoding: .utf8)
+    let now = Date()
+    let document = EditorDocument(
+        id: UUID(),
+        title: expectedURL.lastPathComponent,
+        text: "unsaved buffer",
+        fileURL: expectedURL,
+        isScratch: false,
+        isDirty: true,
+        createdAt: now,
+        updatedAt: now,
+        requiresFileAuthorization: true
+    )
+    let store = EditorStore(
+        documents: [document],
+        selectedDocumentID: document.id,
+        sessionStore: NoopSessionStore()
+    )
+
+    store.reauthorizeDocument(document.id, with: differentURL)
+
+    try expect(store.documents.first?.fileURL == expectedURL, "Reauthorization must not relink a tab to a differently named file.")
+    try expect(store.documents.first?.requiresFileAuthorization == true, "A rejected file must leave authorization unresolved.")
+    try expect(store.statusMessage?.contains("expected.txt") == true, "The warning should identify the file that must be selected.")
+}
+
+func testRegexSafetyLimits() throws {
+    let risky = SearchOptions(query: "(a+)+", replacement: "x", usesRegex: true)
+    try expect(
+        SearchReplaceEngine.replaceAll(in: String(repeating: "a", count: 10_000), options: risky)
+            == .failure(message: RegexSearchError.patternNotSupported.localizedDescription),
+        "Quantified regex groups should be rejected before matching."
+    )
+
+    let oversized = String(repeating: "a", count: 300_001)
+    let bounded = SearchOptions(query: "a+", replacement: "x", usesRegex: true)
+    try expect(
+        SearchReplaceEngine.replaceAll(in: oversized, options: bounded)
+            == .failure(message: RegexSearchError.inputTooLarge.localizedDescription),
+        "Regex replace should report oversized input instead of running it."
+    )
+    try expect(
+        SearchReplaceEngine.summary(in: oversized, options: bounded, currentMatchIndex: nil).errorMessage
+            == RegexSearchError.inputTooLarge.localizedDescription,
+        "Regex search summary should distinguish oversized input from no matches."
+    )
+
+    let ambiguous = SearchOptions(
+        query: "a*a*a*a*a*a*a*a*a*a*b",
+        replacement: "x",
+        usesRegex: true
+    )
+    let startedAt = Date()
+    let ambiguousResult = SearchReplaceEngine.replaceAll(
+        in: String(repeating: "a", count: 40_000),
+        options: ambiguous
+    )
+    try expect(Date().timeIntervalSince(startedAt) < 1.0, "Ambiguous regex matching should be stopped promptly.")
+    try expect(
+        ambiguousResult == .failure(message: RegexSearchError.matchingTimedOut.localizedDescription),
+        "A stopped regex should report timeout rather than oversized input or no matches."
+    )
+}
+
+func testWholeWordLargeLiteralInput() throws {
+    let text = String(repeating: "cat ", count: 100_000)
+    let options = SearchOptions(query: "cat", replacement: "dog", isWholeWord: true)
+    let evaluation = SearchReplaceEngine.evaluate(in: text, options: options, currentMatchIndex: nil)
+    try expect(evaluation.summary.errorMessage == nil, "Whole-word literal search should not inherit the regex size limit.")
+    try expect(evaluation.summary.matchCount == 100_000, "Whole-word literal search should handle large input.")
+    let unicodeEvaluation = SearchReplaceEngine.evaluate(
+        in: "😀cat😀 cafécat cat",
+        options: options,
+        currentMatchIndex: nil
+    )
+    try expect(unicodeEvaluation.summary.matchCount == 2, "Whole-word boundary checks should safely handle surrogate pairs.")
+}
+
+func testEditorStoreCachesSearchEvaluation() throws {
+    var document = EditorDocument.scratch(index: 1)
+    document.text = String(repeating: "alpha beta ", count: 2_000)
+    let store = EditorStore(
+        documents: [document],
+        selectedDocumentID: document.id,
+        sessionStore: NoopSessionStore()
+    )
+    store.updateSearchQuery("beta")
+    let deadline = Date().addingTimeInterval(2)
+    while store.searchSummary.matchCount != 2_000, Date() < deadline {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+    }
+    try expect(store.searchSummary.matchCount == 2_000, "EditorStore should publish the debounced search evaluation.")
+    let first = store.searchSummary
+    let startedAt = Date()
+    for _ in 0..<1_000 { _ = store.searchSummary }
+    try expect(store.searchSummary == first, "Repeated summary reads should return cached state.")
+    try expect(Date().timeIntervalSince(startedAt) < 0.1, "Reading cached search state should not rerun matching.")
 }
 
 func testSearchReplaceLargeLiteralInputCompletes() throws {
@@ -1179,6 +1371,46 @@ func testXMLEmptyInput() throws {
     }
 }
 
+func testXMLRejectsEntities() throws {
+    let externalEntity = #"<!DOCTYPE root [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><root>&xxe;</root>"#
+    guard case let .failure(message) = XMLTools.format(externalEntity) else {
+        throw SelfTestError.failed("XML external entity declarations should be rejected.")
+    }
+    try expect(message.contains("entity declarations"), "XML entity rejection should explain the restriction.")
+
+    let expansion = #"<!DOCTYPE root [<!ENTITY a "123"><!ENTITY b "&a;&a;">]><root>&b;</root>"#
+    guard case .failure = XMLTools.minify(expansion) else {
+        throw SelfTestError.failed("XML internal entity expansion should be rejected.")
+    }
+
+    let harmless = #"<root><!-- Example: <!DOCTYPE html> --><![CDATA[<!ENTITY example>]]></root>"#
+    guard case .success = XMLTools.format(harmless) else {
+        throw SelfTestError.failed("DOCTYPE/entity text inside comments and CDATA should remain valid.")
+    }
+}
+
+func testImageFileSizeLimits() throws {
+    try expect(
+        LargeFilePolicy.maximumImageByteLimit(forExtension: "svg") == 10 * 1_048_576,
+        "SVG files should have a conservative 10 MB limit."
+    )
+    try expect(
+        LargeFilePolicy.maximumImageByteLimit(forExtension: "PNG") == 100 * 1_048_576,
+        "Raster images should use the general 100 MB image limit."
+    )
+
+    let disguisedSVG = FileManager.default.temporaryDirectory
+        .appendingPathComponent("\(UUID().uuidString).png")
+    defer { try? FileManager.default.removeItem(at: disguisedSVG) }
+    try #"<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>"#
+        .write(to: disguisedSVG, atomically: true, encoding: .utf8)
+    try expect(EditorFileIO.isLikelySVG(at: disguisedSVG), "SVG content should be detected despite a raster extension.")
+    try expect(
+        LargeFilePolicy.maximumImageByteLimit(for: disguisedSVG) == LargeFilePolicy.maximumSVGByteLimit,
+        "Disguised SVG content should receive the stricter vector-image limit."
+    )
+}
+
 // MARK: - Word frequency tests
 
 func testWordFrequencyTopWords() throws {
@@ -1438,6 +1670,7 @@ let tests: [(String, () throws -> Void)] = [
     ("editing missing document clears flag", testEditingMissingDocumentClearsFlag),
     ("save and load session", testSaveAndLoadSession),
     ("missing session returns nil", testMissingSessionReturnsNil),
+    ("legacy session migration", testLegacySessionMigration),
     ("trim trailing whitespace", testTrimTrailingWhitespace),
     ("trim trailing whitespace handles empty input", testTrimTrailingWhitespaceHandlesEmptyInput),
     ("line transforms", testLineTransforms),
@@ -1448,6 +1681,12 @@ let tests: [(String, () throws -> Void)] = [
     ("search replace", testSearchReplace),
     ("regex replace", testRegexReplace),
     ("search replace edge cases", testSearchReplaceEdgeCases),
+    ("search cache invalidates immediately", testSearchCacheInvalidatesImmediately),
+    ("reauthorization preserves dirty buffer", testReauthorizationPreservesDirtyBuffer),
+    ("reauthorization rejects different file", testReauthorizationRejectsDifferentFile),
+    ("regex safety limits", testRegexSafetyLimits),
+    ("whole-word large literal input", testWholeWordLargeLiteralInput),
+    ("editor store caches search evaluation", testEditorStoreCachesSearchEvaluation),
     ("search replace large literal input", testSearchReplaceLargeLiteralInputCompletes),
     ("close tab behaviors", testCloseTabBehaviors),
     ("close other tabs and language", testCloseOtherTabsAndLanguage),
@@ -1485,6 +1724,8 @@ let tests: [(String, () throws -> Void)] = [
     ("XML minify valid", testXMLMinify),
     ("XML invalid reports error", testXMLInvalidReportsError),
     ("XML empty input fails", testXMLEmptyInput),
+    ("XML entities rejected", testXMLRejectsEntities),
+    ("image file size limits", testImageFileSizeLimits),
     ("word frequency top words", testWordFrequencyTopWords),
     ("word frequency empty input", testWordFrequencyEmptyInput),
     ("word frequency ignores short tokens", testWordFrequencyIgnoresShortTokens),

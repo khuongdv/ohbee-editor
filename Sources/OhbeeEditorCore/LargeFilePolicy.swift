@@ -12,6 +12,19 @@ public enum LargeFilePolicy {
     public static let normalByteLimit  = 10 * 1_048_576    // 10 MB
     public static let warningByteLimit = 50 * 1_048_576    // 50 MB
     public static let maximumByteLimit = 100 * 1_048_576   // 100 MB
+    public static let maximumImageByteLimit = 100 * 1_048_576
+    public static let maximumSVGByteLimit = 10 * 1_048_576
+
+    public static func maximumImageByteLimit(forExtension fileExtension: String) -> Int {
+        fileExtension.lowercased() == "svg" ? maximumSVGByteLimit : maximumImageByteLimit
+    }
+
+    public static func maximumImageByteLimit(for fileURL: URL) -> Int {
+        if fileURL.pathExtension.lowercased() == "svg" || EditorFileIO.isLikelySVG(at: fileURL) {
+            return maximumSVGByteLimit
+        }
+        return maximumImageByteLimit
+    }
 
     /// Maximum UTF-8 bytes of document text stored inline in the session JSON.
     /// Larger scratch and dirty file-backed buffers are stored as local sidecar files.
