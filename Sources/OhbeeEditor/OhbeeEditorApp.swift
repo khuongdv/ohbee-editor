@@ -7,6 +7,7 @@ struct OhbeeEditorApp: App {
     @NSApplicationDelegateAdaptor(OhbeeEditorAppDelegate.self) private var appDelegate
     @StateObject private var store = EditorStore()
     @State private var isSearchVisible = false
+    @State private var searchFocusRequest = 0
     @State private var isAboutVisible = false
     @State private var isHelpVisible = false
     @State private var isCompareVisible = false
@@ -22,6 +23,7 @@ struct OhbeeEditorApp: App {
             ContentView(
                 store: store,
                 isSearchVisible: $isSearchVisible,
+                searchFocusRequest: $searchFocusRequest,
                 isSafeShareReviewVisible: $isSafeShareReviewVisible,
                 isCommandPaletteVisible: $isCommandPaletteVisible
             )
@@ -154,11 +156,13 @@ struct OhbeeEditorApp: App {
             CommandGroup(after: .textEditing) {
                 Button("Find") {
                     isSearchVisible = true
+                    searchFocusRequest &+= 1
                 }
                 .keyboardShortcut("f", modifiers: .command)
 
                 Button("Find and Replace") {
                     isSearchVisible = true
+                    searchFocusRequest &+= 1
                 }
                 .keyboardShortcut("f", modifiers: [.command, .option])
 

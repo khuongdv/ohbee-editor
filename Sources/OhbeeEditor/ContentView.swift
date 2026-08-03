@@ -6,6 +6,7 @@ import OhbeeEditorCore
 struct ContentView: View {
     @ObservedObject var store: EditorStore
     @Binding var isSearchVisible: Bool
+    @Binding var searchFocusRequest: Int
     @Binding var isSafeShareReviewVisible: Bool
     @Binding var isCommandPaletteVisible: Bool
     @Environment(\.colorScheme) private var colorScheme
@@ -63,8 +64,11 @@ struct ContentView: View {
         }
         .onChange(of: isSearchVisible) { visible in
             if visible {
-                searchFieldFocused = true
+                focusSearchField()
             }
+        }
+        .onChange(of: searchFocusRequest) { _ in
+            focusSearchField()
         }
         .onChange(of: isSafeShareReviewVisible) { visible in
             if visible {
@@ -242,6 +246,9 @@ struct ContentView: View {
             .textFieldStyle(.roundedBorder)
             .frame(width: 180)
             .focused($searchFieldFocused)
+            .onAppear {
+                focusSearchField()
+            }
 
             Text(store.searchSummary.displayText)
                 .font(.caption)
@@ -333,6 +340,13 @@ struct ContentView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(.bar)
+    }
+
+    private func focusSearchField() {
+        DispatchQueue.main.async {
+            guard isSearchVisible else { return }
+            searchFieldFocused = true
+        }
     }
 
     @ViewBuilder
@@ -625,6 +639,7 @@ struct ContentView: View {
             },
             CommandPaletteAction(title: "Find and Replace", subtitle: "Show current-tab search controls", keywords: "search replace") {
                 isSearchVisible = true
+                searchFocusRequest &+= 1
             },
             CommandPaletteAction(title: "Review Safe Share", subtitle: "Review likely sensitive text before sharing", keywords: "mask redact secret token") {
                 presentSafeShareReview()
