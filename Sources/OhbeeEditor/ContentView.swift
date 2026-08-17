@@ -340,8 +340,7 @@ struct ContentView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(.bar)
-        .onChange(of: store.searchSummary) { summary in
-            guard summary.currentMatchIndex != nil else { return }
+        .onChange(of: store.searchSelectionRequest) { _ in
             selectCurrentSearchMatch()
         }
     }

@@ -31,6 +31,8 @@ public final class EditorStore: ObservableObject {
     @Published public private(set) var recentFiles: [URL]
     @Published public private(set) var recentlyClosedFileURLs: [URL] = []
     @Published public private(set) var searchSummary = SearchSummary(matchCount: 0, currentMatchIndex: nil)
+    /// Changes only when a search action should move the editor selection to a result.
+    @Published public private(set) var searchSelectionRequest = 0
 
     private let sessionStore: SessionPersisting
     private let fileIO: EditorFileIO
@@ -241,6 +243,7 @@ public final class EditorStore: ObservableObject {
             return
         }
 
+        let wasSelected = selectedDocumentID == id
         let document = documents[index]
         let closedTitle = document.title
         recordClosedFileIfNeeded(document)
@@ -256,7 +259,11 @@ public final class EditorStore: ObservableObject {
         }
         reconcileSecurityScopedAccess()
 
-        refreshCurrentMatch()
+        if wasSelected {
+            scheduleSearchEvaluation(resetCurrentIndex: true)
+        } else {
+            refreshCurrentMatch()
+        }
         setStatus("Closed \(closedTitle).")
         saveSession()
     }
@@ -269,6 +276,7 @@ public final class EditorStore: ObservableObject {
         guard let index = documents.firstIndex(where: { $0.id == id }) else {
             return
         }
+        let wasSelected = selectedDocumentID == id
         let removedTitle = documents[index].title
         documents.remove(at: index)
 
@@ -282,7 +290,11 @@ public final class EditorStore: ObservableObject {
         }
         reconcileSecurityScopedAccess()
 
-        refreshCurrentMatch()
+        if wasSelected {
+            scheduleSearchEvaluation(resetCurrentIndex: true)
+        } else {
+            refreshCurrentMatch()
+        }
         setStatus("Removed \(removedTitle): original file was deleted.", tone: .warning)
         saveSession()
     }
@@ -292,12 +304,17 @@ public final class EditorStore: ObservableObject {
             return
         }
 
+        let changesSelection = selectedDocumentID != id
         recordClosedFilesIfNeeded(documents.filter { $0.id != id })
         let closedCount = max(documents.count - 1, 0)
         documents = [document]
         reconcileSecurityScopedAccess()
         selectedDocumentID = document.id
-        refreshCurrentMatch()
+        if changesSelection {
+            scheduleSearchEvaluation(resetCurrentIndex: true)
+        } else {
+            refreshCurrentMatch()
+        }
         setStatus(closedCount == 1 ? "Closed 1 other tab." : "Closed \(closedCount) other tabs.")
         saveSession()
     }
@@ -313,11 +330,16 @@ public final class EditorStore: ObservableObject {
             return
         }
 
+        let changesSelection = selectedDocumentID != id
         recordClosedFilesIfNeeded(Array(documents.suffix(from: index + 1)))
         documents.removeSubrange((index + 1)..<documents.count)
         reconcileSecurityScopedAccess()
         selectedDocumentID = id
-        refreshCurrentMatch()
+        if changesSelection {
+            scheduleSearchEvaluation(resetCurrentIndex: true)
+        } else {
+            refreshCurrentMatch()
+        }
         setStatus(closedCount == 1 ? "Closed 1 tab to the right." : "Closed \(closedCount) tabs to the right.")
         saveSession()
     }
@@ -330,6 +352,7 @@ public final class EditorStore: ObservableObject {
         reconcileSecurityScopedAccess()
         selectedDocumentID = document.id
         currentMatchIndex = nil
+        scheduleSearchEvaluation(resetCurrentIndex: true)
         setStatus(closedCount == 1 ? "Closed 1 tab." : "Closed \(closedCount) tabs.")
         saveSession()
     }
@@ -784,7 +807,7 @@ public final class EditorStore: ObservableObject {
             }
             return
         }
-        scheduleSearchEvaluation(resetCurrentIndex: true)
+        scheduleSearchEvaluation(resetCurrentIndex: true, selectOnCompletion: true)
     }
 
     public func updateReplacement(_ replacement: String) {
@@ -797,7 +820,7 @@ public final class EditorStore: ObservableObject {
             currentMatchIndex = nil
             return
         }
-        scheduleSearchEvaluation(resetCurrentIndex: true)
+        scheduleSearchEvaluation(resetCurrentIndex: true, selectOnCompletion: true)
     }
 
     public func setCaseSensitiveSearchEnabled(_ enabled: Bool) {
@@ -806,7 +829,7 @@ public final class EditorStore: ObservableObject {
             currentMatchIndex = nil
             return
         }
-        scheduleSearchEvaluation(resetCurrentIndex: true)
+        scheduleSearchEvaluation(resetCurrentIndex: true, selectOnCompletion: true)
     }
 
     public func setWholeWordSearchEnabled(_ enabled: Bool) {
@@ -815,7 +838,7 @@ public final class EditorStore: ObservableObject {
             currentMatchIndex = nil
             return
         }
-        scheduleSearchEvaluation(resetCurrentIndex: true)
+        scheduleSearchEvaluation(resetCurrentIndex: true, selectOnCompletion: true)
     }
 
     public func selectNextMatch() {
@@ -970,7 +993,11 @@ public final class EditorStore: ObservableObject {
         scheduleSearchEvaluation(resetCurrentIndex: false)
     }
 
-    private func scheduleSearchEvaluation(resetCurrentIndex: Bool) {
+    public func requestSearchSelectionAfterEvaluation() {
+        scheduleSearchEvaluation(resetCurrentIndex: false, selectOnCompletion: true)
+    }
+
+    private func scheduleSearchEvaluation(resetCurrentIndex: Bool, selectOnCompletion: Bool? = nil) {
         pendingSearchEvaluation?.cancel()
         searchEvaluationGeneration += 1
         let generation = searchEvaluationGeneration
@@ -988,6 +1015,7 @@ public final class EditorStore: ObservableObject {
         let text = document.text
         let options = searchOptions
         let requestedIndex = resetCurrentIndex ? nil : previousIndex
+        let shouldSelectOnCompletion = selectOnCompletion ?? resetCurrentIndex
         let workItem = DispatchWorkItem { [weak self] in
             let evaluation = SearchReplaceEngine.evaluate(
                 in: text,
@@ -1002,6 +1030,9 @@ public final class EditorStore: ObservableObject {
                 self.cachedSearchRanges = evaluation.ranges
                 self.currentMatchIndex = evaluation.summary.currentMatchIndex
                 self.searchSummary = evaluation.summary
+                if shouldSelectOnCompletion, evaluation.summary.currentMatchIndex != nil {
+                    self.searchSelectionRequest &+= 1
+                }
             }
         }
         pendingSearchEvaluation = workItem
@@ -1039,7 +1070,7 @@ public final class EditorStore: ObservableObject {
         document.isDirty = true
         document.updatedAt = Date()
         documents[index] = document
-        refreshCurrentMatch()
+        requestSearchSelectionAfterEvaluation()
         setStatus(replacementCount == 1
             ? "Replaced 1 match."
             : "Replaced \(replacementCount) matches.")

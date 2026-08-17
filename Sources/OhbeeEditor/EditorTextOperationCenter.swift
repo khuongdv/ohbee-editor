@@ -147,10 +147,7 @@ final class EditorTextOperationCenter {
         }
 
         store.reportOperationStatus("Replaced 1 match.")
-
-        DispatchQueue.main.async {
-            self.selectCurrentSearchMatch(store: store)
-        }
+        store.requestSearchSelectionAfterEvaluation()
     }
 
     func replaceAllSearchMatches(store: EditorStore) {
@@ -176,10 +173,7 @@ final class EditorTextOperationCenter {
             store.reportOperationStatus(replacementCount == 1
                 ? "Replaced 1 match."
                 : "Replaced \(replacementCount) matches.")
-
-            DispatchQueue.main.async {
-                self.selectCurrentSearchMatch(store: store)
-            }
+            store.requestSearchSelectionAfterEvaluation()
         case let .failure(message):
             store.reportOperationStatus(message, tone: .warning)
         }

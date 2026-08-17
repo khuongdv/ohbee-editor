@@ -357,6 +357,155 @@ func testSearchCacheInvalidatesImmediately() throws {
     try expect(store.searchSummary.matchCount == 1, "Replacement changes must not discard a valid search evaluation.")
 }
 
+func testEditingSearchMatchDoesNotRequestSelection() throws {
+    var document = EditorDocument.scratch(index: 1)
+    document.text = "LynkiD first\nLynkiD second"
+    let store = EditorStore(
+        documents: [document],
+        selectedDocumentID: document.id,
+        sessionStore: NoopSessionStore(),
+        sessionSaveDebounceInterval: 0
+    )
+
+    store.updateSearchQuery("LynkiD")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    try expect(store.searchSummary.matchCount == 2, "Setup should publish both search matches.")
+    let selectionRequest = store.searchSelectionRequest
+    try expect(selectionRequest > 0, "Entering a query should request selection of its first match.")
+
+    store.textBinding(for: document.id).wrappedValue = "M first\nLynkiD second"
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+
+    try expect(store.searchSummary.matchCount == 1, "Editing a match should refresh the remaining search results.")
+    try expect(
+        store.searchSelectionRequest == selectionRequest,
+        "Editing document text must not request selection of the next search result."
+    )
+}
+
+func testClosingSelectedDocumentRequestsSearchSelection() throws {
+    var first = EditorDocument.scratch(index: 1)
+    first.text = "LynkiD first"
+    var second = EditorDocument.scratch(index: 2)
+    second.text = "before LynkiD after"
+    let store = EditorStore(
+        documents: [first, second],
+        selectedDocumentID: first.id,
+        sessionStore: NoopSessionStore(),
+        sessionSaveDebounceInterval: 0
+    )
+
+    store.updateSearchQuery("LynkiD")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    let selectionRequest = store.searchSelectionRequest
+
+    store.closeDocument(first.id)
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+
+    try expect(store.selectedDocumentID == second.id, "Closing the selected document should select the remaining document.")
+    try expect(store.currentSearchMatchRange == NSRange(location: 7, length: 6), "Search should reset to the first match in the newly selected document.")
+    try expect(store.searchSelectionRequest == selectionRequest + 1, "Changing documents through Close should request match selection.")
+}
+
+func testClosingBackgroundDocumentDoesNotRequestSearchSelection() throws {
+    var selected = EditorDocument.scratch(index: 1)
+    selected.text = "LynkiD selected"
+    var background = EditorDocument.scratch(index: 2)
+    background.text = "LynkiD background"
+    let store = EditorStore(
+        documents: [selected, background],
+        selectedDocumentID: selected.id,
+        sessionStore: NoopSessionStore(),
+        sessionSaveDebounceInterval: 0
+    )
+
+    store.updateSearchQuery("LynkiD")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    let selectionRequest = store.searchSelectionRequest
+
+    store.closeDocument(background.id)
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+
+    try expect(store.selectedDocumentID == selected.id, "Closing a background document should preserve the selected document.")
+    try expect(store.searchSelectionRequest == selectionRequest, "Closing a background document must not move the editor selection.")
+}
+
+func testDiscardingSelectedDocumentRequestsSearchSelection() throws {
+    let now = Date()
+    let missing = EditorDocument(
+        id: UUID(),
+        title: "missing.txt",
+        text: "LynkiD missing",
+        fileURL: nil,
+        isScratch: false,
+        isDirty: false,
+        createdAt: now,
+        updatedAt: now,
+        isMissingFile: true
+    )
+    var remaining = EditorDocument.scratch(index: 1)
+    remaining.text = "LynkiD remaining"
+    let store = EditorStore(
+        documents: [missing, remaining],
+        selectedDocumentID: missing.id,
+        sessionStore: NoopSessionStore(),
+        sessionSaveDebounceInterval: 0
+    )
+
+    store.updateSearchQuery("LynkiD")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    let selectionRequest = store.searchSelectionRequest
+
+    store.discardMissingDocument(missing.id)
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+
+    try expect(store.selectedDocumentID == remaining.id, "Discarding the selected missing document should select the remaining document.")
+    try expect(store.searchSelectionRequest == selectionRequest + 1, "Changing documents through Discard should request match selection.")
+}
+
+func testCloseAllClearsSearchState() throws {
+    var document = EditorDocument.scratch(index: 1)
+    document.text = "LynkiD"
+    let store = EditorStore(
+        documents: [document],
+        selectedDocumentID: document.id,
+        sessionStore: NoopSessionStore(),
+        sessionSaveDebounceInterval: 0
+    )
+
+    store.updateSearchQuery("LynkiD")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    try expect(store.searchSummary.matchCount == 1, "Setup should publish a search match.")
+
+    store.closeAllDocuments()
+
+    try expect(store.searchSummary.matchCount == 0, "Close All should synchronously clear stale search results.")
+    try expect(store.currentSearchMatchRange == nil, "Close All should clear the stale current match range.")
+}
+
+func testReplaceCurrentRequestsSearchSelection() throws {
+    var document = EditorDocument.scratch(index: 1)
+    document.text = "LynkiD first LynkiD second"
+    let store = EditorStore(
+        documents: [document],
+        selectedDocumentID: document.id,
+        sessionStore: NoopSessionStore(),
+        sessionSaveDebounceInterval: 0
+    )
+
+    store.updateSearchQuery("LynkiD")
+    store.updateReplacement("MyCompany")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    let selectionRequest = store.searchSelectionRequest
+
+    store.replaceCurrentMatch()
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+
+    try expect(store.selectedDocument?.text == "MyCompany first LynkiD second", "Replace should update the current match.")
+    try expect(store.searchSummary.matchCount == 1, "Replace should refresh the remaining matches.")
+    try expect(store.searchSelectionRequest == selectionRequest + 1, "Replace should select the next available match.")
+}
+
 func testReauthorizationPreservesDirtyBuffer() throws {
     let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).txt")
     defer { try? FileManager.default.removeItem(at: fileURL) }
@@ -1682,6 +1831,12 @@ let tests: [(String, () throws -> Void)] = [
     ("regex replace", testRegexReplace),
     ("search replace edge cases", testSearchReplaceEdgeCases),
     ("search cache invalidates immediately", testSearchCacheInvalidatesImmediately),
+    ("editing search match preserves selection", testEditingSearchMatchDoesNotRequestSelection),
+    ("closing selected document selects search match", testClosingSelectedDocumentRequestsSearchSelection),
+    ("closing background document preserves selection", testClosingBackgroundDocumentDoesNotRequestSearchSelection),
+    ("discarding selected document selects search match", testDiscardingSelectedDocumentRequestsSearchSelection),
+    ("close all clears search state", testCloseAllClearsSearchState),
+    ("replace current selects remaining match", testReplaceCurrentRequestsSearchSelection),
     ("reauthorization preserves dirty buffer", testReauthorizationPreservesDirtyBuffer),
     ("reauthorization rejects different file", testReauthorizationRejectsDifferentFile),
     ("regex safety limits", testRegexSafetyLimits),
