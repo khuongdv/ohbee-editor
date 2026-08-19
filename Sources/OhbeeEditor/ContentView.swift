@@ -311,7 +311,6 @@ struct ContentView: View {
                 get: { store.searchOptions.isCaseSensitive },
                 set: { enabled in
                     store.setCaseSensitiveSearchEnabled(enabled)
-                    selectCurrentSearchMatch()
                 }
             ))
             .toggleStyle(.checkbox)
@@ -321,7 +320,6 @@ struct ContentView: View {
                 get: { store.searchOptions.isWholeWord },
                 set: { enabled in
                     store.setWholeWordSearchEnabled(enabled)
-                    selectCurrentSearchMatch()
                 }
             ))
             .toggleStyle(.checkbox)
