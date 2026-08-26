@@ -31,8 +31,26 @@ enum TextLineTools {
         return .lf
     }
 
+    /// Scalar comparison is required: `"\r\n"` is a single Swift `Character`, so
+    /// `hasSuffix("\n")` is false for CRLF text and would drop its terminal line ending.
     static func hasTerminalLineEnding(_ text: String) -> Bool {
-        text.hasSuffix("\n") || text.hasSuffix("\r")
+        guard let lastScalar = text.unicodeScalars.last else {
+            return false
+        }
+
+        return lastScalar == "\n" || lastScalar == "\r"
+    }
+
+    /// Lines without the empty element that a terminal line ending produces. Transforms work
+    /// on these so a trailing newline is never sorted, deduplicated, or counted as a line, and
+    /// is restored by `joinLinesPreservingTerminalLineEnding`.
+    static func contentLines(in text: String) -> [String] {
+        var lines = splitLines(text)
+        if hasTerminalLineEnding(text), lines.last == "" {
+            lines.removeLast()
+        }
+
+        return lines
     }
 
     static func joinLinesPreservingTerminalLineEnding(_ lines: [String], originalText: String) -> String {

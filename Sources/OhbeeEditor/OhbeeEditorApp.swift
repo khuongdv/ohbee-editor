@@ -381,117 +381,42 @@ struct OhbeeEditorApp: App {
         }
     }
 
+    private var fileCommands: EditorFileCommands {
+        EditorFileCommands(store: store)
+    }
+
     private func closeSelectedTabWithWarning() {
-        guard let selectedDocumentID = store.selectedDocumentID else {
-            return
-        }
-
-        guard let document = store.documents.first(where: { $0.id == selectedDocumentID }) else {
-            return
-        }
-
-        if document.isMissingFile {
-            store.discardMissingDocument(selectedDocumentID)
-            return
-        }
-
-        switch UnsavedTabWarning.closeDecision(for: [document]) {
-        case .closeWithoutSaving:
-            store.closeDocument(selectedDocumentID)
-        case .saveThenClose:
-            if save() {
-                store.closeDocument(selectedDocumentID)
-            }
-        case .cancel:
-            return
-        }
+        fileCommands.closeSelectedTab()
     }
 
     private func closeOtherTabsWithWarning(keeping id: EditorDocument.ID) {
-        let closingDocuments = store.documents.filter { $0.id != id }
-        closeDocumentsWithWarning(closingDocuments) {
-            store.closeOtherDocuments(keeping: id)
-        }
+        fileCommands.closeOtherTabs(keeping: id)
     }
 
     private func closeTabsToRightWithWarning(of id: EditorDocument.ID) {
-        guard let index = store.documents.firstIndex(where: { $0.id == id }) else {
-            return
-        }
-
-        let closingDocuments = Array(store.documents.suffix(from: index + 1))
-        closeDocumentsWithWarning(closingDocuments) {
-            store.closeDocumentsToRight(of: id)
-        }
+        fileCommands.closeTabsToRight(of: id)
     }
 
     private func closeAllTabsWithWarning() {
-        closeDocumentsWithWarning(store.documents) {
-            store.closeAllDocuments()
-        }
-    }
-
-    private func closeDocumentsWithWarning(_ documents: [EditorDocument], close: () -> Void) {
-        switch UnsavedTabWarning.closeDecision(for: documents) {
-        case .closeWithoutSaving:
-            close()
-        case .saveThenClose:
-            guard
-                let dirtyDocument = documents.first(where: \.isDirty),
-                documents.filter(\.isDirty).count == 1
-            else {
-                return
-            }
-
-            store.selectDocument(dirtyDocument.id)
-            if save() {
-                close()
-            }
-        case .cancel:
-            return
-        }
+        fileCommands.closeAllTabs()
     }
 
     private func openFile() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = true
-
-        if panel.runModal() == .OK {
-            for url in panel.urls {
-                store.openDocument(from: url)
-            }
-        }
+        fileCommands.openFile()
     }
 
     @discardableResult
     private func save() -> Bool {
-        if store.saveSelectedDocument() {
-            return true
-        }
-
-        return saveAs()
+        fileCommands.save()
     }
 
     @discardableResult
     private func saveAs() -> Bool {
-        guard let document = store.selectedDocument else {
-            return false
-        }
-
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = document.title
-
-        if panel.runModal() == .OK, let fileURL = panel.url {
-            return store.saveSelectedDocument(to: fileURL)
-        }
-
-        return false
+        fileCommands.saveAs()
     }
 
     private func saveAll() {
-        store.saveAllDocuments()
+        fileCommands.saveAll()
     }
 }
 

@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import SwiftUI
 
 public enum StatusMessageTone {
@@ -12,7 +13,24 @@ public struct SaveAllResult: Equatable {
     public let skippedScratchCount: Int
     public let skippedCleanCount: Int
     public let skippedReadOnlyCount: Int
+    public let skippedUnauthorizedCount: Int
     public let failedCount: Int
+
+    public init(
+        savedCount: Int,
+        skippedScratchCount: Int,
+        skippedCleanCount: Int,
+        skippedReadOnlyCount: Int,
+        skippedUnauthorizedCount: Int = 0,
+        failedCount: Int
+    ) {
+        self.savedCount = savedCount
+        self.skippedScratchCount = skippedScratchCount
+        self.skippedCleanCount = skippedCleanCount
+        self.skippedReadOnlyCount = skippedReadOnlyCount
+        self.skippedUnauthorizedCount = skippedUnauthorizedCount
+        self.failedCount = failedCount
+    }
 }
 
 public final class EditorStore: ObservableObject {
@@ -44,6 +62,9 @@ public final class EditorStore: ObservableObject {
     private var cachedSearchRanges: [NSRange] = []
     private var searchEvaluationGeneration = 0
     private var pendingSearchEvaluation: DispatchWorkItem?
+    private var didReportBookmarkFailure = false
+
+    private static let logger = Logger(subsystem: "link.ohbee.editor", category: "file-access")
 
     private struct RecentFileRecord: Codable {
         let path: String
@@ -71,7 +92,8 @@ public final class EditorStore: ObservableObject {
             }
         )
 
-        let restoredSession = Self.restoreSession(using: sessionStore)
+        let restoreOutcome = Self.restoreSession(using: sessionStore)
+        let restoredSession = restoreOutcome.session
         let requestedDocuments = documents ?? restoredSession?.documents
         let initialDocuments: [EditorDocument]
         if let requestedDocuments, !requestedDocuments.isEmpty {
@@ -87,6 +109,11 @@ public final class EditorStore: ObservableObject {
 
         if self.selectedDocument == nil {
             self.selectedDocumentID = initialDocuments[0].id
+        }
+
+        if let warning = restoreOutcome.warning {
+            self.statusMessage = warning
+            self.statusMessageTone = .warning
         }
 
         // Resolve persistent user grants before touching restored file URLs in a sandbox.
@@ -484,7 +511,7 @@ public final class EditorStore: ObservableObject {
             isDirty: false,
             createdAt: now,
             updatedAt: now,
-            securityScopedBookmark: try? fileURL.bookmarkData(options: .withSecurityScope),
+            securityScopedBookmark: makeSecurityScopedBookmark(for: fileURL),
             isLargeFile: isLargeFile,
             isReadOnly: isReadOnly
         )
@@ -570,7 +597,7 @@ public final class EditorStore: ObservableObject {
 
         documents[index].fileURL = selectedURL
         documents[index].title = selectedURL.lastPathComponent
-        documents[index].securityScopedBookmark = try? selectedURL.bookmarkData(options: .withSecurityScope)
+        documents[index].securityScopedBookmark = makeSecurityScopedBookmark(for: selectedURL)
         documents[index].requiresFileAuthorization = false
         documents[index].isMissingFile = false
         addRecentFile(selectedURL)
@@ -628,7 +655,7 @@ public final class EditorStore: ObservableObject {
             updated = Array(updated.prefix(Self.maxRecentFiles))
         }
         recentFiles = updated
-        if let bookmark = try? url.bookmarkData(options: .withSecurityScope) {
+        if let bookmark = makeSecurityScopedBookmark(for: url) {
             recentFileBookmarks[Self.urlKey(url)] = bookmark
         }
         persistRecentFiles()
@@ -657,17 +684,32 @@ public final class EditorStore: ObservableObject {
             return false
         }
 
+        // Same rule as Save All: a tab whose sandbox grant is gone is not written back to its
+        // original path. Save As to a path the user just picked in a panel is still allowed,
+        // because that selection is itself the grant.
+        if documents[index].requiresFileAuthorization, fileURL == documents[index].fileURL {
+            setStatus(
+                "Cannot save \(documents[index].title): restore file access first, or use Save As.",
+                tone: .warning
+            )
+            return false
+        }
+
         retainSecurityScopedAccess(for: fileURL)
         do {
             try fileIO.save(documents[index], to: fileURL)
 
             var document = documents[index]
             document.fileURL = fileURL
-            document.securityScopedBookmark = try? fileURL.bookmarkData(options: .withSecurityScope)
+            document.securityScopedBookmark = makeSecurityScopedBookmark(for: fileURL)
             document.title = fileURL.lastPathComponent
             document.isScratch = false
             document.isDirty = false
             document.isReadOnly = false
+            // The write succeeded against this URL, so access is resolved for it. Leaving the
+            // flag set would make Save All skip the tab forever.
+            document.requiresFileAuthorization = false
+            document.isMissingFile = false
             document.updatedAt = Date()
             documents[index] = document
             reconcileSecurityScopedAccess()
@@ -688,6 +730,7 @@ public final class EditorStore: ObservableObject {
         var skippedScratchCount = 0
         var skippedCleanCount = 0
         var skippedReadOnlyCount = 0
+        var skippedUnauthorizedCount = 0
         var failedCount = 0
 
         for index in documents.indices {
@@ -706,12 +749,25 @@ public final class EditorStore: ObservableObject {
                 continue
             }
 
+            // A tab that lost its sandbox grant must not be written blindly; the user
+            // reauthorizes it explicitly, and the dirty buffer stays intact meanwhile.
+            guard !documents[index].requiresFileAuthorization else {
+                skippedUnauthorizedCount += 1
+                continue
+            }
+
+            // Save All runs outside the open/save panel flow, so it needs the same scoped
+            // access lease that saving the selected document takes.
+            retainSecurityScopedAccess(for: fileURL)
             do {
                 try fileIO.save(documents[index], to: fileURL)
                 documents[index].isDirty = false
                 documents[index].updatedAt = Date()
                 savedCount += 1
             } catch {
+                Self.logger.error(
+                    "Save All could not write \(fileURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                )
                 failedCount += 1
             }
         }
@@ -725,9 +781,11 @@ public final class EditorStore: ObservableObject {
             skippedScratchCount: skippedScratchCount,
             skippedCleanCount: skippedCleanCount,
             skippedReadOnlyCount: skippedReadOnlyCount,
+            skippedUnauthorizedCount: skippedUnauthorizedCount,
             failedCount: failedCount
         )
-        setStatus(saveAllStatus(for: result), tone: result.failedCount > 0 ? .warning : .neutral)
+        let hasWarning = result.failedCount > 0 || result.skippedUnauthorizedCount > 0
+        setStatus(saveAllStatus(for: result), tone: hasWarning ? .warning : .neutral)
         return result
     }
 
@@ -742,8 +800,9 @@ public final class EditorStore: ObservableObject {
         guard !documents[index].isImageFile else { return }
         guard !documents[index].isReadOnly else { return }
 
-        // SwiftUI.TextEditor on the current macOS target does not expose a stable
-        // selection binding, so Phase 4 applies transforms to the full document.
+        // Fallback path used when no NSTextView is registered (no focused editor surface, or a
+        // document that is not on screen). Selection-aware transforms and native undo live in
+        // EditorTextOperationCenter, which is the path every menu and button uses.
         let originalText = documents[index].text
 
         switch transform(originalText) {
@@ -945,6 +1004,9 @@ public final class EditorStore: ObservableObject {
 
     private func saveAllStatus(for result: SaveAllResult) -> String {
         if result.savedCount == 0 && result.failedCount == 0 {
+            if result.skippedUnauthorizedCount > 0 {
+                return "No files saved. Some tabs need file access restored first."
+            }
             if result.skippedScratchCount > 0 {
                 return "No file-backed changes to save. Unsaved notes need Save As."
             }
@@ -963,6 +1025,11 @@ public final class EditorStore: ObservableObject {
         }
         if result.skippedReadOnlyCount > 0 {
             parts.append(result.skippedReadOnlyCount == 1 ? "skipped 1 read-only file" : "skipped \(result.skippedReadOnlyCount) read-only files")
+        }
+        if result.skippedUnauthorizedCount > 0 {
+            parts.append(result.skippedUnauthorizedCount == 1
+                ? "skipped 1 file needing access"
+                : "skipped \(result.skippedUnauthorizedCount) files needing access")
         }
         if result.failedCount > 0 {
             parts.append(result.failedCount == 1 ? "failed 1 file" : "failed \(result.failedCount) files")
@@ -1131,6 +1198,31 @@ public final class EditorStore: ObservableObject {
         return record
     }
 
+    /// Persistent file access depends on app-scoped bookmarks, which require the
+    /// `com.apple.security.files.bookmarks.app-scope` entitlement in a sandboxed build.
+    /// Swallowing this failure silently degrades the app to per-launch reauthorization,
+    /// so it is logged and surfaced once instead.
+    private func makeSecurityScopedBookmark(for url: URL) -> Data? {
+        do {
+            return try url.bookmarkData(options: .withSecurityScope)
+        } catch {
+            reportBookmarkFailureOnce(error, for: url)
+            return nil
+        }
+    }
+
+    private func reportBookmarkFailureOnce(_ error: Error, for url: URL) {
+        Self.logger.error(
+            "Could not create a security-scoped bookmark for \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
+        )
+        guard !didReportBookmarkFailure else { return }
+        didReportBookmarkFailure = true
+        setStatus(
+            "File access will not persist after quitting: \(error.localizedDescription)",
+            tone: .warning
+        )
+    }
+
     private func retainSecurityScopedAccess(for url: URL) {
         let standardized = url.standardizedFileURL
         guard !activeSecurityScopedURLs.contains(standardized) else { return }
@@ -1177,7 +1269,7 @@ public final class EditorStore: ObservableObject {
             retainSecurityScopedAccess(for: resolvedURL)
             documents[index].requiresFileAuthorization = false
             if isStale {
-                documents[index].securityScopedBookmark = try? resolvedURL.bookmarkData(options: .withSecurityScope)
+                documents[index].securityScopedBookmark = makeSecurityScopedBookmark(for: resolvedURL)
             }
         }
     }
@@ -1214,7 +1306,7 @@ public final class EditorStore: ObservableObject {
         if isStale {
             let didStart = resolved.startAccessingSecurityScopedResource()
             defer { if didStart { resolved.stopAccessingSecurityScopedResource() } }
-            refreshed = try? resolved.bookmarkData(options: .withSecurityScope)
+            refreshed = makeSecurityScopedBookmark(for: resolved)
         } else {
             refreshed = bookmark
         }
@@ -1255,16 +1347,26 @@ public final class EditorStore: ObservableObject {
         ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil
     }
 
-    private static func restoreSession(using sessionStore: SessionPersisting) -> EditorSession? {
+    public struct SessionRestoreOutcome {
+        public let session: EditorSession?
+        public let warning: String?
+    }
+
+    /// A failed restore is never silent: the session store keeps the unreadable manifest and
+    /// any unsaved sidecar text on disk, and the reason is reported in the status bar.
+    public static func restoreSession(using sessionStore: SessionPersisting) -> SessionRestoreOutcome {
         do {
-            guard let session = try sessionStore.loadSession(),
-                  !session.documents.isEmpty else {
-                return nil
+            let session = try sessionStore.loadSession()
+            guard let session, !session.documents.isEmpty else {
+                return SessionRestoreOutcome(session: nil, warning: sessionStore.recoveryNotice)
             }
 
-            return session
+            return SessionRestoreOutcome(session: session, warning: sessionStore.recoveryNotice)
         } catch {
-            return nil
+            return SessionRestoreOutcome(
+                session: nil,
+                warning: sessionStore.recoveryNotice ?? error.localizedDescription
+            )
         }
     }
 

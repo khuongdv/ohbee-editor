@@ -51,8 +51,4 @@ public enum LargeFilePolicy {
         return document.text
     }
 
-    /// Dirty state is preserved because large unsaved buffers spill to local sidecar files.
-    public static func shouldPreserveDirtyState(for document: EditorDocument) -> Bool {
-        true
-    }
 }

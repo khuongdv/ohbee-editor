@@ -7,20 +7,18 @@ public enum TextTransformResult: Equatable {
 
 public enum BasicTextTransforms {
     public static func trimWhitespace(_ text: String) -> TextTransformResult {
-        let lineEnding = TextLineTools.preferredLineEnding(in: text)
-        let lines = TextLineTools.splitLines(text)
+        let lines = TextLineTools.contentLines(in: text)
         let trimmedLines = lines.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         let changedLineCount = zip(lines, trimmedLines).filter { $0 != $1 }.count
 
         return .success(
-            text: trimmedLines.joined(separator: lineEnding.rawValue),
+            text: TextLineTools.joinLinesPreservingTerminalLineEnding(trimmedLines, originalText: text),
             summary: lineSummary("Trimmed whitespace", count: changedLineCount)
         )
     }
 
     public static func trimTrailingWhitespace(_ text: String) -> TextTransformResult {
-        let lineEnding = TextLineTools.preferredLineEnding(in: text)
-        let lines = TextLineTools.splitLines(text)
+        let lines = TextLineTools.contentLines(in: text)
         let trimmedLines = lines.map { line in
             line.replacingOccurrences(
                 of: #"[ \t]+$"#,
@@ -34,25 +32,26 @@ public enum BasicTextTransforms {
             ? "Trimmed trailing whitespace on 1 line."
             : "Trimmed trailing whitespace on \(changedLineCount) lines."
 
-        return .success(text: trimmedLines.joined(separator: lineEnding.rawValue), summary: summary)
+        return .success(
+            text: TextLineTools.joinLinesPreservingTerminalLineEnding(trimmedLines, originalText: text),
+            summary: summary
+        )
     }
 
     public static func removeEmptyLines(_ text: String) -> TextTransformResult {
-        let lineEnding = TextLineTools.preferredLineEnding(in: text)
-        let lines = TextLineTools.splitLines(text)
+        let lines = TextLineTools.contentLines(in: text)
         let keptLines = lines.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         let removedCount = lines.count - keptLines.count
 
         return .success(
-            text: keptLines.joined(separator: lineEnding.rawValue),
+            text: TextLineTools.joinLinesPreservingTerminalLineEnding(keptLines, originalText: text),
             summary: lineSummary("Removed empty", count: removedCount)
         )
     }
 
     public static func removeDuplicateLines(_ text: String) -> TextTransformResult {
-        let lineEnding = TextLineTools.preferredLineEnding(in: text)
         var seen = Set<String>()
-        let lines = TextLineTools.splitLines(text)
+        let lines = TextLineTools.contentLines(in: text)
         let keptLines = lines.filter { line in
             if seen.contains(line) {
                 return false
@@ -63,33 +62,36 @@ public enum BasicTextTransforms {
         }
 
         return .success(
-            text: keptLines.joined(separator: lineEnding.rawValue),
+            text: TextLineTools.joinLinesPreservingTerminalLineEnding(keptLines, originalText: text),
             summary: lineSummary("Removed duplicate", count: lines.count - keptLines.count)
         )
     }
 
     public static func sortLines(_ text: String) -> TextTransformResult {
-        let lineEnding = TextLineTools.preferredLineEnding(in: text)
-        let lines = TextLineTools.splitLines(text)
-
-        return .success(
-            text: lines.sorted { $0.localizedStandardCompare($1) == .orderedAscending }.joined(separator: lineEnding.rawValue),
-            summary: lineSummary("Sorted", count: lines.count)
-        )
+        sorted(text, ascending: true, summaryVerb: "Sorted")
     }
 
     public static func sortLinesDescending(_ text: String) -> TextTransformResult {
-        let lineEnding = TextLineTools.preferredLineEnding(in: text)
-        let lines = TextLineTools.splitLines(text)
+        sorted(text, ascending: false, summaryVerb: "Sorted descending")
+    }
+
+    private static func sorted(
+        _ text: String,
+        ascending: Bool,
+        summaryVerb: String
+    ) -> TextTransformResult {
+        let lines = TextLineTools.contentLines(in: text)
+        let expectedOrder: ComparisonResult = ascending ? .orderedAscending : .orderedDescending
+        let sortedLines = lines.sorted { $0.localizedStandardCompare($1) == expectedOrder }
 
         return .success(
-            text: lines.sorted { $0.localizedStandardCompare($1) == .orderedDescending }.joined(separator: lineEnding.rawValue),
-            summary: lineSummary("Sorted descending", count: lines.count)
+            text: TextLineTools.joinLinesPreservingTerminalLineEnding(sortedLines, originalText: text),
+            summary: lineSummary(summaryVerb, count: lines.count)
         )
     }
 
     public static func joinLines(_ text: String) -> TextTransformResult {
-        let lines = TextLineTools.splitLines(text)
+        let lines = TextLineTools.contentLines(in: text)
         let joined = lines
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }

@@ -225,38 +225,44 @@ func testSearchSummaryAndNavigation() throws {
     let options = SearchOptions(query: "xin", replacement: "hello", usesRegex: false, isCaseSensitive: false)
     let text = "Xin chao\nxin nua"
 
+    let evaluation = SearchReplaceEngine.evaluate(in: text, options: options, currentMatchIndex: nil)
     try expect(
-        SearchReplaceEngine.summary(in: text, options: options, currentMatchIndex: nil) == SearchSummary(matchCount: 2, currentMatchIndex: 0),
-        "Search summary should count case-insensitive matches."
+        evaluation.summary == SearchSummary(matchCount: 2, currentMatchIndex: 0),
+        "Search evaluation should count case-insensitive matches."
     )
     try expect(
-        SearchReplaceEngine.nextMatchIndex(in: text, options: options, currentMatchIndex: 0) == 1,
-        "Next match should advance."
-    )
-    try expect(
-        SearchReplaceEngine.previousMatchIndex(in: text, options: options, currentMatchIndex: 0) == 1,
-        "Previous match should wrap."
+        evaluation.ranges == [NSRange(location: 0, length: 3), NSRange(location: 9, length: 3)],
+        "Search evaluation should return the ranges consumers highlight."
     )
 
-    let visibleOnlyRanges = SearchReplaceEngine.matchRanges(
-        in: "xin before\nmiddle\nxin visible\nxin after",
-        options: options,
-        range: NSRange(location: 12, length: 17)
-    )
-    try expect(
-        visibleOnlyRanges == [NSRange(location: 18, length: 3)],
-        "Search range matching should only return matches inside the requested text range."
-    )
-
-    let regexRanges = SearchReplaceEngine.matchRanges(
+    let regexEvaluation = SearchReplaceEngine.evaluate(
         in: "id=100\nid=200\nid=300",
         options: SearchOptions(query: #"id=\d+"#, usesRegex: true, isCaseSensitive: true),
-        range: NSRange(location: 7, length: 6)
+        currentMatchIndex: nil
     )
     try expect(
-        regexRanges == [NSRange(location: 7, length: 6)],
-        "Regex range matching should respect the requested text range."
+        regexEvaluation.ranges.count == 3,
+        "Regex evaluation should return every match range."
     )
+
+    // Navigation lives in EditorStore and walks the cached ranges; it is the only path the UI uses.
+    var document = EditorDocument.scratch(index: 1)
+    document.text = text
+    let store = EditorStore(
+        documents: [document],
+        selectedDocumentID: document.id,
+        sessionStore: NoopSessionStore(),
+        sessionSaveDebounceInterval: 0
+    )
+    store.updateSearchQuery("xin")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    try expect(store.searchSummary.currentMatchIndex == 0, "A new query should start at the first match.")
+    store.selectNextMatch()
+    try expect(store.searchSummary.currentMatchIndex == 1, "Next match should advance.")
+    store.selectNextMatch()
+    try expect(store.searchSummary.currentMatchIndex == 0, "Next match should wrap to the first match.")
+    store.selectPreviousMatch()
+    try expect(store.searchSummary.currentMatchIndex == 1, "Previous match should wrap backwards.")
 }
 
 func testSearchReplace() throws {
@@ -300,7 +306,7 @@ func testRegexReplace() throws {
 
 func testSearchReplaceEdgeCases() throws {
     let invalidRegex = SearchOptions(query: #"("#, replacement: "", usesRegex: true, isCaseSensitive: true)
-    let invalidSummary = SearchReplaceEngine.summary(in: "abc", options: invalidRegex, currentMatchIndex: nil)
+    let invalidSummary = SearchReplaceEngine.evaluate(in: "abc", options: invalidRegex, currentMatchIndex: nil).summary
     try expect(
         invalidSummary.hasInvalidRegex && invalidSummary.errorMessage != nil,
         "Invalid regex search should report an invalid pattern."
@@ -310,13 +316,13 @@ func testSearchReplaceEdgeCases() throws {
         "Invalid regex replace all should fail without mutating text."
     )
     try expect(
-        SearchReplaceEngine.matchRanges(in: "abc", options: invalidRegex).isEmpty,
+        SearchReplaceEngine.evaluate(in: "abc", options: invalidRegex, currentMatchIndex: nil).ranges.isEmpty,
         "Invalid regex match lookup should return no ranges."
     )
 
     let wholeWord = SearchOptions(query: "cat", replacement: "dog", usesRegex: false, isCaseSensitive: false, isWholeWord: true)
     try expect(
-        SearchReplaceEngine.matchRanges(in: "cat scatter cat-cat _cat cat1", options: wholeWord) == [
+        SearchReplaceEngine.evaluate(in: "cat scatter cat-cat _cat cat1", options: wholeWord, currentMatchIndex: nil).ranges == [
             NSRange(location: 0, length: 3),
             NSRange(location: 12, length: 3),
             NSRange(location: 16, length: 3)
@@ -330,7 +336,7 @@ func testSearchReplaceEdgeCases() throws {
 
     let caseSensitive = SearchOptions(query: "xin", replacement: "hello", usesRegex: false, isCaseSensitive: true)
     try expect(
-        SearchReplaceEngine.summary(in: "Xin xin XIN", options: caseSensitive, currentMatchIndex: nil) == SearchSummary(matchCount: 1, currentMatchIndex: 0),
+        SearchReplaceEngine.evaluate(in: "Xin xin XIN", options: caseSensitive, currentMatchIndex: nil).summary == SearchSummary(matchCount: 1, currentMatchIndex: 0),
         "Case-sensitive search should only count exact-case matches."
     )
 }
@@ -569,7 +575,7 @@ func testRegexSafetyLimits() throws {
     try expect(
         SearchReplaceEngine.replaceAll(in: String(repeating: "a", count: 10_000), options: risky)
             == .failure(message: RegexSearchError.patternNotSupported.localizedDescription),
-        "Quantified regex groups should be rejected before matching."
+        "Nested quantifiers should be rejected before matching."
     )
 
     let oversized = String(repeating: "a", count: 300_001)
@@ -580,7 +586,7 @@ func testRegexSafetyLimits() throws {
         "Regex replace should report oversized input instead of running it."
     )
     try expect(
-        SearchReplaceEngine.summary(in: oversized, options: bounded, currentMatchIndex: nil).errorMessage
+        SearchReplaceEngine.evaluate(in: oversized, options: bounded, currentMatchIndex: nil).summary.errorMessage
             == RegexSearchError.inputTooLarge.localizedDescription,
         "Regex search summary should distinguish oversized input from no matches."
     )
@@ -1405,14 +1411,17 @@ func testSessionTextForScratchOverCap() throws {
     try expect(LargeFilePolicy.sessionText(for: doc) == bigText, "Scratch doc over cap should preserve text for sidecar persistence.")
 }
 
-func testShouldPreserveDirtyStateFileBacked() throws {
+func testDirtyFileBackedTextIsPreservedForSession() throws {
     let smallDirtyDoc = EditorDocument(
         id: UUID(), title: "file.txt", text: "small change",
         fileURL: URL(fileURLWithPath: "/tmp/file.txt"),
         isScratch: false, isDirty: true,
         createdAt: Date(), updatedAt: Date()
     )
-    try expect(LargeFilePolicy.shouldPreserveDirtyState(for: smallDirtyDoc), "Small dirty file-backed doc should preserve dirty state.")
+    try expect(
+        LargeFilePolicy.sessionText(for: smallDirtyDoc) == "small change",
+        "A dirty file-backed doc should keep its unsaved text in the session."
+    )
 
     let bigText = String(repeating: "x", count: LargeFilePolicy.sessionTextCap + 1)
     let largeDirtyDoc = EditorDocument(
@@ -1421,7 +1430,17 @@ func testShouldPreserveDirtyStateFileBacked() throws {
         isScratch: false, isDirty: true,
         createdAt: Date(), updatedAt: Date()
     )
-    try expect(LargeFilePolicy.shouldPreserveDirtyState(for: largeDirtyDoc), "Large dirty file-backed doc should preserve dirty state through sidecar persistence.")
+    try expect(
+        LargeFilePolicy.sessionText(for: largeDirtyDoc) == bigText,
+        "A large dirty file-backed doc should preserve text for sidecar persistence."
+    )
+
+    var cleanDoc = smallDirtyDoc
+    cleanDoc.isDirty = false
+    try expect(
+        LargeFilePolicy.sessionText(for: cleanDoc).isEmpty,
+        "A clean file-backed doc is re-read from disk, so the session should store no text."
+    )
 }
 
 func testFileSizeSessionRoundTrip() throws {
@@ -1631,6 +1650,596 @@ func testDiffEmptyBase() throws {
     try expect(lines.count == 1 && lines[0].kind == .added, "All lines should be added when base is empty.")
 }
 
+// MARK: - Regressions for the sandbox, session-recovery, privacy, and transform fixes
+
+func testLegacyStoreDirectoryUsesRealHome() throws {
+    let containerHome = "/Users/tester/Library/Containers/link.ohbee.editor/Data"
+
+    try expect(
+        LocalSessionStore.homePathStrippingContainerSuffix(containerHome) == "/Users/tester",
+        "A sandbox container home should resolve back to the account home."
+    )
+    try expect(
+        LocalSessionStore.homePathStrippingContainerSuffix("/Users/tester") == "/Users/tester",
+        "A non-container home should be returned unchanged."
+    )
+    try expect(
+        LocalSessionStore.realHomeDirectoryPath(sandboxHomePath: containerHome, posixHomePath: "/Users/tester")
+            == "/Users/tester",
+        "The POSIX account home should win over the container home."
+    )
+    try expect(
+        LocalSessionStore.realHomeDirectoryPath(sandboxHomePath: containerHome, posixHomePath: nil)
+            == "/Users/tester",
+        "Without a POSIX home, the container suffix should still be stripped."
+    )
+
+    let legacyDirectory = LocalSessionStore.legacyStoreDirectory().path
+    try expect(
+        !legacyDirectory.contains("/Library/Containers/"),
+        "The pre-sandbox store directory must never point inside the sandbox container."
+    )
+    try expect(
+        legacyDirectory.hasSuffix("/Library/Application Support/Ohbee Editor"),
+        "The pre-sandbox store directory should be the Application Support folder."
+    )
+}
+
+func testUnsupportedSessionVersionIsReportedAsSuch() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let fileURL = directory.appendingPathComponent("session.json")
+    try #"{"version": 99, "documents": []}"#.write(to: fileURL, atomically: true, encoding: .utf8)
+
+    let store = LocalSessionStore(fileURL: fileURL)
+    var caught: SessionPersistenceError?
+    do {
+        _ = try store.loadSession()
+    } catch let error as SessionPersistenceError {
+        caught = error
+    }
+
+    guard let caught else {
+        throw SelfTestError.failed("A newer session format should report a failure.")
+    }
+    try expect(
+        caught.isUnsupportedVersion,
+        "A newer session format should be reported as unsupported, not as corruption."
+    )
+    try expect(
+        store.recoveryNotice?.contains("newer version") == true,
+        "The notice should explain that the session came from a newer build: \(store.recoveryNotice ?? "nil")"
+    )
+}
+
+func testFailedLoadMovesOrphanTextOutOfPruneScope() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let sidecarDirectory = directory.appendingPathComponent("Session Text", isDirectory: true)
+    try FileManager.default.createDirectory(at: sidecarDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let fileURL = directory.appendingPathComponent("session.json")
+    try "{ not json".write(to: fileURL, atomically: true, encoding: .utf8)
+    try "unsaved note text".write(
+        to: sidecarDirectory.appendingPathComponent("\(UUID().uuidString).txt"),
+        atomically: true,
+        encoding: .utf8
+    )
+
+    let firstLaunch = LocalSessionStore(fileURL: fileURL)
+    _ = try? firstLaunch.loadSession()
+    let replacement = EditorDocument.scratch(index: 1)
+    try firstLaunch.saveSession(EditorSession(selectedDocumentID: replacement.id, documents: [replacement]))
+
+    let recoveredDirectories = try FileManager.default
+        .contentsOfDirectory(atPath: directory.path)
+        .filter { $0.hasPrefix("Recovered Note Text ") }
+    try expect(recoveredDirectories.count == 1, "Orphan note text should be moved to a recovery folder.")
+
+    let recoveredURL = directory.appendingPathComponent(recoveredDirectories[0], isDirectory: true)
+    let recoveredFiles = try FileManager.default.contentsOfDirectory(atPath: recoveredURL.path)
+    try expect(recoveredFiles.count == 1, "The recovery folder should hold the preserved text file.")
+    try expect(
+        firstLaunch.recoveryNotice?.contains("Recovered Note Text") == true,
+        "The notice should point at the recovery folder."
+    )
+
+    // Later healthy launches must not be able to delete the preserved text.
+    let secondLaunch = LocalSessionStore(fileURL: fileURL)
+    _ = try secondLaunch.loadSession()
+    let note = EditorDocument.scratch(index: 2)
+    try secondLaunch.saveSession(EditorSession(selectedDocumentID: note.id, documents: [note]))
+    let thirdLaunch = LocalSessionStore(fileURL: fileURL)
+    _ = try thirdLaunch.loadSession()
+    try thirdLaunch.saveSession(EditorSession(selectedDocumentID: note.id, documents: [note]))
+
+    try expect(
+        FileManager.default.fileExists(atPath: recoveredURL.appendingPathComponent(recoveredFiles[0]).path),
+        "Preserved note text must survive every later launch, not just the one that recovered it."
+    )
+}
+
+func testHiddenFilesDoNotBlockSidecarPruning() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let sidecarDirectory = directory.appendingPathComponent("Session Text", isDirectory: true)
+    try FileManager.default.createDirectory(at: sidecarDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    try Data().write(to: sidecarDirectory.appendingPathComponent(".DS_Store"))
+
+    let store = LocalSessionStore(fileURL: directory.appendingPathComponent("session.json"))
+    let loaded = try store.loadSession()
+
+    try expect(loaded == nil, "A missing manifest should still return nil.")
+    try expect(
+        store.recoveryNotice == nil,
+        "Filesystem noise must not be reported as preserved note text: \(store.recoveryNotice ?? "nil")"
+    )
+    try expect(
+        FileManager.default.fileExists(atPath: sidecarDirectory.path),
+        "A directory holding only hidden files should be left alone, not moved."
+    )
+}
+
+func testReadableSessionStillPrunesUnusedSidecars() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let fileURL = directory.appendingPathComponent("session.json")
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let store = LocalSessionStore(fileURL: fileURL)
+    let bigText = String(repeating: "x", count: LargeFilePolicy.sessionTextCap + 1)
+    var note = EditorDocument.scratch(index: 1)
+    note.text = bigText
+    note.isDirty = true
+
+    try store.saveSession(EditorSession(selectedDocumentID: note.id, documents: [note]))
+    let sidecarURL = directory
+        .appendingPathComponent("Session Text", isDirectory: true)
+        .appendingPathComponent("\(note.id.uuidString).txt")
+    try expect(
+        FileManager.default.fileExists(atPath: sidecarURL.path),
+        "A large note should spill to a sidecar file."
+    )
+
+    // A successful load proves the manifest is readable, so stale sidecars may be pruned.
+    _ = try store.loadSession()
+    let replacement = EditorDocument.scratch(index: 2)
+    try store.saveSession(EditorSession(selectedDocumentID: replacement.id, documents: [replacement]))
+
+    try expect(
+        !FileManager.default.fileExists(atPath: sidecarURL.path),
+        "Sidecars that the current session no longer references should be pruned after a successful load."
+    )
+    try expect(store.recoveryNotice == nil, "A healthy session should not produce a recovery notice.")
+}
+
+func testCorruptSessionIsQuarantined() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let fileURL = directory.appendingPathComponent("session.json")
+    try "{ not json".write(to: fileURL, atomically: true, encoding: .utf8)
+
+    let store = LocalSessionStore(fileURL: fileURL)
+    var didThrow = false
+    do {
+        _ = try store.loadSession()
+    } catch {
+        didThrow = true
+    }
+
+    try expect(didThrow, "An unreadable session should report a failure instead of returning nil.")
+    try expect(
+        !FileManager.default.fileExists(atPath: fileURL.path),
+        "The unreadable manifest should be moved aside, not left to be overwritten."
+    )
+    let quarantined = try FileManager.default
+        .contentsOfDirectory(atPath: directory.path)
+        .filter { $0.hasPrefix("session.corrupt-") }
+    try expect(quarantined.count == 1, "The unreadable manifest should be kept as a quarantined copy.")
+    try expect(store.recoveryNotice != nil, "A load failure should produce a user-facing notice.")
+}
+
+func testCorruptSessionKeepsSidecarText() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let sidecarDirectory = directory.appendingPathComponent("Session Text", isDirectory: true)
+    try FileManager.default.createDirectory(at: sidecarDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let fileURL = directory.appendingPathComponent("session.json")
+    try "{ not json".write(to: fileURL, atomically: true, encoding: .utf8)
+    let sidecarURL = sidecarDirectory.appendingPathComponent("\(UUID().uuidString).txt")
+    try "unsaved note text".write(to: sidecarURL, atomically: true, encoding: .utf8)
+
+    let store = LocalSessionStore(fileURL: fileURL)
+    _ = try? store.loadSession()
+
+    // Saving a fresh session must not delete text this process could not account for.
+    let replacement = EditorDocument.scratch(index: 1)
+    try store.saveSession(EditorSession(selectedDocumentID: replacement.id, documents: [replacement]))
+
+    // The text may have been moved out of the prunable directory; what matters is that its
+    // content still exists somewhere under the session directory.
+    let preservedTexts = FileManager.default
+        .enumerator(at: directory, includingPropertiesForKeys: nil)?
+        .compactMap { $0 as? URL }
+        .filter { $0.pathExtension == "txt" }
+        .compactMap { try? String(contentsOf: $0, encoding: .utf8) } ?? []
+
+    try expect(
+        preservedTexts.contains("unsaved note text"),
+        "Unsaved note text must survive a session load failure, found: \(preservedTexts)"
+    )
+    try expect(
+        !FileManager.default.fileExists(atPath: sidecarURL.path),
+        "Preserved text should be moved out of the directory that pruning scans."
+    )
+}
+
+func testCorruptSessionWarnsThroughStore() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let fileURL = directory.appendingPathComponent("session.json")
+    try "{ not json".write(to: fileURL, atomically: true, encoding: .utf8)
+
+    let sessionStore = LocalSessionStore(fileURL: fileURL)
+    let outcome = EditorStore.restoreSession(using: sessionStore)
+
+    try expect(outcome.session == nil, "An unreadable session should not restore documents.")
+    try expect(outcome.warning != nil, "An unreadable session should surface a warning to the user.")
+}
+
+func testSafeShareMaskHidesPrefixAndSuffix() throws {
+    let text = "key sk_live_51H8xQpKq9ZabCdEfGhIjKl and mail john.doe@company.com"
+
+    guard case let .success(masked, _) = SafeShare.maskDetectedPatterns(text) else {
+        throw SelfTestError.failed("Safe Share masking should succeed.")
+    }
+
+    try expect(!masked.contains("sk_live"), "Masking must not keep a secret prefix.")
+    try expect(!masked.contains("IjKl"), "Masking must not keep a secret suffix.")
+    try expect(!masked.contains("john"), "Masking must not keep an email prefix.")
+    try expect(!masked.contains(".com"), "Masking must not keep an email suffix.")
+    try expect(
+        masked.contains(SafeShare.redactionPlaceholder),
+        "Masked output should use the fixed redaction placeholder."
+    )
+}
+
+func testSafeSharePhoneFalsePositives() throws {
+    let logText = """
+    2026-05-15 12:30:45 INFO request from 192.168.100.201
+    build version 1.2.3.4567 finished
+    order 1234567890 shipped
+    ids 10 20 30 40 50
+    invoice total 123.45
+    date 2026-05-15 recorded
+    """
+
+    let phoneFindings = SafeShare.detect(in: logText).filter { $0.category == "Phone number" }
+    try expect(
+        phoneFindings.isEmpty,
+        "Timestamps, IP addresses, version strings, bare IDs, and dates must not be treated as phone numbers: \(phoneFindings.map(\.text))"
+    )
+
+    guard case let .success(masked, _) = SafeShare.maskDetectedPatterns(logText) else {
+        throw SelfTestError.failed("Masking log text should succeed.")
+    }
+    try expect(
+        masked.contains("2026-05-15 12:30:45") && masked.contains("192.168.100.201"),
+        "Apply Mask must leave ordinary log data untouched."
+    )
+}
+
+func testSafeSharePhoneTruePositives() throws {
+    let samples = ["+1 (415) 555-2671", "0912 345 678", "415-555-2671", "+14155552671"]
+
+    for sample in samples {
+        let findings = SafeShare.detect(in: "call \(sample) today").filter { $0.category == "Phone number" }
+        try expect(!findings.isEmpty, "Safe Share should still detect \(sample) as a phone number.")
+    }
+}
+
+func testLineTransformsPreserveTerminalNewline() throws {
+    try expect(
+        BasicTextTransforms.sortLines("banana\napple\ncherry\n") == .success(
+            text: "apple\nbanana\ncherry\n",
+            summary: "Sorted 3 lines."
+        ),
+        "Sorting must not move a terminal newline to the top of the document."
+    )
+
+    try expect(
+        BasicTextTransforms.sortLinesDescending("apple\nbanana\n") == .success(
+            text: "banana\napple\n",
+            summary: "Sorted descending 2 lines."
+        ),
+        "Descending sort should preserve the terminal newline."
+    )
+
+    try expect(
+        BasicTextTransforms.trimWhitespace("  one  \n  two  \n") == .success(
+            text: "one\ntwo\n",
+            summary: "Trimmed whitespace 2 lines."
+        ),
+        "Trimming should preserve the terminal newline without adding a blank line."
+    )
+
+    try expect(
+        BasicTextTransforms.removeDuplicateLines("a\nb\na\n") == .success(
+            text: "a\nb\n",
+            summary: "Removed duplicate 1 line."
+        ),
+        "Deduplication should not count or drop the terminal newline."
+    )
+
+    try expect(
+        BasicTextTransforms.removeEmptyLines("one\n\ntwo\n") == .success(
+            text: "one\ntwo\n",
+            summary: "Removed empty 1 line."
+        ),
+        "Removing empty lines should preserve the terminal newline."
+    )
+
+    try expect(
+        BasicTextTransforms.sortLines("b\r\na\r\n") == .success(
+            text: "a\r\nb\r\n",
+            summary: "Sorted 2 lines."
+        ),
+        "Sorting should preserve dominant CRLF endings including the terminal one."
+    )
+
+    try expect(
+        BasicTextTransforms.sortLines("b\ra\r") == .success(
+            text: "a\rb\r",
+            summary: "Sorted 2 lines."
+        ),
+        "Sorting should preserve dominant CR endings including the terminal one."
+    )
+
+    // Documented edge: when a transform empties the document there is no line left to terminate,
+    // so the result is empty rather than a lone newline.
+    try expect(
+        BasicTextTransforms.trimWhitespace(" \n") == .success(
+            text: "",
+            summary: "Trimmed whitespace 1 line."
+        ),
+        "Trimming a document down to nothing should produce empty text, not a stray newline."
+    )
+    try expect(
+        BasicTextTransforms.removeEmptyLines("\n\n") == .success(
+            text: "",
+            summary: "Removed empty 2 lines."
+        ),
+        "Removing every line should produce empty text."
+    )
+}
+
+func testRegexAllowsOrdinaryConstructs() throws {
+    let nonCapturing = SearchOptions(query: #"(?:cat|dog)s?"#, replacement: "pet", usesRegex: true)
+    try expect(
+        SearchReplaceEngine.replaceAll(in: "cats and dogs", options: nonCapturing)
+            == .success(text: "pet and pet", replacementCount: 2),
+        "Non-capturing groups should be usable in regex mode."
+    )
+
+    let quantifiedGroup = SearchOptions(query: #"(ab)+"#, replacement: "x", usesRegex: true)
+    try expect(
+        SearchReplaceEngine.replaceAll(in: "abab cd", options: quantifiedGroup)
+            == .success(text: "x cd", replacementCount: 1),
+        "A quantified plain group is ordinary regex and should be allowed."
+    )
+
+    let lookahead = SearchOptions(query: #"\d+(?=px)"#, replacement: "N", usesRegex: true)
+    try expect(
+        SearchReplaceEngine.replaceAll(in: "12px 34em", options: lookahead)
+            == .success(text: "Npx 34em", replacementCount: 1),
+        "Lookaheads should be allowed."
+    )
+
+    let lookbehind = SearchOptions(query: #"(?<=id=)\d+"#, replacement: "N", usesRegex: true)
+    try expect(
+        SearchReplaceEngine.replaceAll(in: "id=42", options: lookbehind)
+            == .success(text: "id=N", replacementCount: 1),
+        "Lookbehinds should be allowed."
+    )
+
+    let backreference = SearchOptions(query: #"(\w)\1"#, replacement: "x", usesRegex: true)
+    try expect(
+        SearchReplaceEngine.replaceAll(in: "aa bb", options: backreference)
+            == .failure(message: RegexSearchError.patternNotSupported.localizedDescription),
+        "Pattern backreferences should stay rejected."
+    )
+
+    let nestedNonCapturing = SearchOptions(query: #"(?:a+)+"#, replacement: "x", usesRegex: true)
+    try expect(
+        SearchReplaceEngine.replaceAll(in: "aaaa", options: nestedNonCapturing)
+            == .failure(message: RegexSearchError.patternNotSupported.localizedDescription),
+        "Nested quantifiers should stay rejected even inside non-capturing groups."
+    )
+}
+
+func testRegexRejectsNestedQuantifiersThroughExtraGroups() throws {
+    let doubleWrapped = SearchOptions(query: "((a+))+", replacement: "x", usesRegex: true)
+    try expect(
+        SearchReplaceEngine.replaceAll(in: "aaaa", options: doubleWrapped)
+            == .failure(message: RegexSearchError.patternNotSupported.localizedDescription),
+        "A nested quantifier wrapped in an extra group should still be rejected."
+    )
+
+    let openEndedInner = SearchOptions(query: "(a{2,})+", replacement: "x", usesRegex: true)
+    try expect(
+        SearchReplaceEngine.replaceAll(in: "aaaa", options: openEndedInner)
+            == .failure(message: RegexSearchError.patternNotSupported.localizedDescription),
+        "An open-ended inner repetition inside a quantified group should be rejected."
+    )
+}
+
+func testRegexAllowsBoundedRepetition() throws {
+    let ipPattern = SearchOptions(
+        query: #"([0-9]{1,3}\.){3}[0-9]{1,3}"#,
+        replacement: "IP",
+        usesRegex: true
+    )
+    try expect(
+        SearchReplaceEngine.replaceAll(in: "from 192.168.100.201 ok", options: ipPattern)
+            == .success(text: "from IP ok", replacementCount: 1),
+        "Bounded repetition such as an IPv4 pattern must stay usable for log inspection."
+    )
+
+    let datePattern = SearchOptions(query: #"(\d{4}-\d{2}-\d{2} ){2}"#, replacement: "D", usesRegex: true)
+    guard case let .success(_, count) = SearchReplaceEngine.replaceAll(
+        in: "2026-05-15 2026-05-16 done",
+        options: datePattern
+    ) else {
+        throw SelfTestError.failed("A bounded date-group pattern should not be refused.")
+    }
+    try expect(count == 1, "Bounded date grouping should match once.")
+}
+
+func testAmbiguousRegexIsStoppedByDeadline() throws {
+    // Alternation ambiguity is not modelled by the construct scan on purpose; the match
+    // deadline is the defence. This pins that the defence still fires.
+    let ambiguous = SearchOptions(query: "(a|a)+$", replacement: "x", usesRegex: true)
+    let startedAt = Date()
+    let result = SearchReplaceEngine.replaceAll(in: String(repeating: "a", count: 40), options: ambiguous)
+    let elapsed = Date().timeIntervalSince(startedAt)
+
+    try expect(elapsed < 1.0, "Ambiguous alternation must be stopped promptly, took \(elapsed)s.")
+    if case let .failure(message) = result {
+        try expect(
+            message == RegexSearchError.matchingTimedOut.localizedDescription,
+            "An ambiguous pattern that is allowed through should report a timeout, got: \(message)"
+        )
+    }
+}
+
+func testSafeShareFindingsCarryLineNumbers() throws {
+    let text = """
+    first dev@example.com
+    second line
+    third ops@example.com
+    """
+
+    let emails = SafeShare.detect(in: text).filter { $0.category == "Email" }
+    try expect(emails.count == 2, "Both emails should be detected.")
+    try expect(emails[0].line == 1, "The first email should be reported on line 1.")
+    try expect(emails[1].line == 3, "The second email should be reported on line 3.")
+
+    let snippets = emails.map(SafeShare.maskedSnippet(for:))
+    try expect(
+        snippets[0] != snippets[1],
+        "Review rows for two findings of the same category must be distinguishable."
+    )
+    try expect(
+        snippets.allSatisfy { !$0.contains("example.com") && !$0.contains("dev") },
+        "Snippets must not echo any part of the value."
+    )
+}
+
+func testSafeShareRejectsWideNumericColumns() throws {
+    let findings = SafeShare.detect(in: "counts 1234 5678 91011 done")
+        .filter { $0.category == "Phone number" }
+    try expect(
+        findings.isEmpty,
+        "Numeric columns with segments wider than a dialable group must not match: \(findings.map(\.text))"
+    )
+}
+
+func testSaveAsClearsAuthorizationRequirement() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let originalURL = directory.appendingPathComponent("original.txt")
+    try "on disk".write(to: originalURL, atomically: true, encoding: .utf8)
+
+    let now = Date()
+    let unauthorized = EditorDocument(
+        id: UUID(),
+        title: "original.txt",
+        text: "buffered edit",
+        fileURL: originalURL,
+        isScratch: false,
+        isDirty: true,
+        createdAt: now,
+        updatedAt: now,
+        requiresFileAuthorization: true
+    )
+    let store = EditorStore(
+        documents: [unauthorized],
+        selectedDocumentID: unauthorized.id,
+        sessionStore: NoopSessionStore()
+    )
+
+    // Saving back to the unauthorized path is refused, same rule as Save All.
+    try expect(
+        store.saveSelectedDocument() == false,
+        "Saving to a path whose access was revoked should be refused."
+    )
+    let untouched = try String(contentsOf: originalURL, encoding: .utf8)
+    try expect(untouched == "on disk", "The original file must not be overwritten.")
+
+    // Save As to a user-picked path succeeds and resolves the authorization state.
+    let rescueURL = directory.appendingPathComponent("rescued.txt")
+    try expect(store.saveSelectedDocument(to: rescueURL), "Save As should rescue the buffer.")
+    try expect(
+        store.documents.first?.requiresFileAuthorization == false,
+        "A successful save must clear the authorization requirement so Save All stops skipping the tab."
+    )
+
+    store.textBinding(for: unauthorized.id).wrappedValue = "edited again"
+    let result = store.saveAllDocuments()
+    try expect(result.savedCount == 1, "Save All should write the rescued tab.")
+    try expect(result.skippedUnauthorizedCount == 0, "The rescued tab must not be skipped any more.")
+}
+
+func testSaveAllSkipsUnauthorizedDocuments() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let fileURL = directory.appendingPathComponent("locked.txt")
+    try "on disk".write(to: fileURL, atomically: true, encoding: .utf8)
+
+    let now = Date()
+    let unauthorized = EditorDocument(
+        id: UUID(),
+        title: "locked.txt",
+        text: "buffered edit",
+        fileURL: fileURL,
+        isScratch: false,
+        isDirty: true,
+        createdAt: now,
+        updatedAt: now,
+        requiresFileAuthorization: true
+    )
+
+    let store = EditorStore(
+        documents: [unauthorized],
+        selectedDocumentID: unauthorized.id,
+        sessionStore: NoopSessionStore()
+    )
+
+    let result = store.saveAllDocuments()
+    try expect(result.savedCount == 0, "Save All must not write a tab whose file access was revoked.")
+    try expect(result.skippedUnauthorizedCount == 1, "Save All should report tabs that need reauthorization.")
+    let onDiskText = try String(contentsOf: fileURL, encoding: .utf8)
+    try expect(
+        onDiskText == "on disk",
+        "The file on disk must stay untouched when access is unresolved."
+    )
+    try expect(
+        store.documents.first?.isDirty == true,
+        "A skipped tab must keep its unsaved buffer."
+    )
+}
+
 func testDiffEmptyChanged() throws {
     let lines = DiffTools.diff(base: ["old"], changed: [])
     try expect(lines.count == 1 && lines[0].kind == .removed, "All lines should be removed when changed is empty.")
@@ -1809,7 +2418,7 @@ let tests: [(String, () throws -> Void)] = [
     ("session text: dirty file-backed over cap preserves text", testSessionTextForDirtyFileBackedOverCap),
     ("session text: scratch within cap persists", testSessionTextForScratchWithinCap),
     ("session text: scratch over cap preserves text", testSessionTextForScratchOverCap),
-    ("session dirty state preservation", testShouldPreserveDirtyStateFileBacked),
+    ("session dirty state preservation", testDirtyFileBackedTextIsPreservedForSession),
     ("session round-trip strips file-backed text", testFileSizeSessionRoundTrip),
     ("large session text sidecar round-trip", testLargeSessionTextSidecarRoundTrip),
     ("isLargeFile not persisted in session", testIsLargeFileNotPersistedInSession),
@@ -1889,7 +2498,27 @@ let tests: [(String, () throws -> Void)] = [
     ("diff removed lines", testDiffRemovedLines),
     ("diff annotated text", testDiffAnnotatedText),
     ("diff empty base", testDiffEmptyBase),
-    ("diff empty changed", testDiffEmptyChanged)
+    ("diff empty changed", testDiffEmptyChanged),
+    ("legacy store directory resolves real home", testLegacyStoreDirectoryUsesRealHome),
+    ("readable session still prunes sidecars", testReadableSessionStillPrunesUnusedSidecars),
+    ("unsupported session version reported", testUnsupportedSessionVersionIsReportedAsSuch),
+    ("failed load moves orphan text out of prune scope", testFailedLoadMovesOrphanTextOutOfPruneScope),
+    ("hidden files do not block pruning", testHiddenFilesDoNotBlockSidecarPruning),
+    ("corrupt session is quarantined", testCorruptSessionIsQuarantined),
+    ("corrupt session keeps sidecar text", testCorruptSessionKeepsSidecarText),
+    ("corrupt session warns through store", testCorruptSessionWarnsThroughStore),
+    ("safe share mask hides prefix and suffix", testSafeShareMaskHidesPrefixAndSuffix),
+    ("safe share phone false positives", testSafeSharePhoneFalsePositives),
+    ("safe share phone true positives", testSafeSharePhoneTruePositives),
+    ("line transforms preserve terminal newline", testLineTransformsPreserveTerminalNewline),
+    ("regex allows ordinary constructs", testRegexAllowsOrdinaryConstructs),
+    ("regex rejects nested quantifiers through extra groups", testRegexRejectsNestedQuantifiersThroughExtraGroups),
+    ("regex allows bounded repetition", testRegexAllowsBoundedRepetition),
+    ("ambiguous regex stopped by deadline", testAmbiguousRegexIsStoppedByDeadline),
+    ("safe share findings carry line numbers", testSafeShareFindingsCarryLineNumbers),
+    ("safe share rejects wide numeric columns", testSafeShareRejectsWideNumericColumns),
+    ("save as clears authorization requirement", testSaveAsClearsAuthorizationRequirement),
+    ("save all skips unauthorized tabs", testSaveAllSkipsUnauthorizedDocuments)
 ]
 
 do {

@@ -108,6 +108,7 @@ struct SafeShareReviewView: View {
                                 .font(.caption)
                                 .fontWeight(.medium)
                                 .frame(width: 130, alignment: .leading)
+                                .help("Finding on line \(finding.line)")
 
                             Text(SafeShare.maskedSnippet(for: finding))
                                 .font(.system(.caption, design: .monospaced))

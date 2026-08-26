@@ -121,11 +121,7 @@ public enum LogCleanupTools {
     }
 
     private static func effectiveLines(in text: String) -> [String] {
-        var lines = TextLineTools.splitLines(text)
-        if TextLineTools.hasTerminalLineEnding(text), lines.last == "" {
-            lines.removeLast()
-        }
-        return lines
+        TextLineTools.contentLines(in: text)
     }
 
     private static func lineSummary(_ verb: String, count: Int) -> String {

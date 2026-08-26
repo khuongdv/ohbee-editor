@@ -737,58 +737,30 @@ struct ContentView: View {
         pasteboard.setString(text, forType: .string)
     }
 
-    private func openFile() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = true
+    private var fileCommands: EditorFileCommands {
+        EditorFileCommands(store: store)
+    }
 
-        if panel.runModal() == .OK {
-            for url in panel.urls {
-                store.openDocument(from: url)
-            }
-        }
+    private func openFile() {
+        fileCommands.openFile()
     }
 
     @discardableResult
     private func save() -> Bool {
-        if store.saveSelectedDocument() {
-            return true
-        }
-
-        return saveAs()
+        fileCommands.save()
     }
 
     @discardableResult
     private func saveAs() -> Bool {
-        guard let document = store.selectedDocument else {
-            return false
-        }
-
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = document.title
-
-        if panel.runModal() == .OK, let fileURL = panel.url {
-            return store.saveSelectedDocument(to: fileURL)
-        }
-
-        return false
+        fileCommands.saveAs()
     }
 
     private func hasTabsToRight(of id: EditorDocument.ID) -> Bool {
-        guard let index = store.documents.firstIndex(where: { $0.id == id }) else {
-            return false
-        }
-
-        return index < store.documents.count - 1
+        fileCommands.hasTabsToRight(of: id)
     }
 
     private func closeSelectedTabWithWarning() {
-        guard let selectedDocumentID = store.selectedDocumentID else {
-            return
-        }
-
-        closeTabWithWarning(selectedDocumentID)
+        fileCommands.closeSelectedTab()
     }
 
     private func handleTabTap(_ document: EditorDocument) {
@@ -830,71 +802,19 @@ struct ContentView: View {
     }
 
     private func closeTabWithWarning(_ id: EditorDocument.ID) {
-        guard let document = store.documents.first(where: { $0.id == id }) else {
-            return
-        }
-
-        if document.isMissingFile {
-            store.discardMissingDocument(id)
-            return
-        }
-
-        switch UnsavedTabWarning.closeDecision(for: [document]) {
-        case .closeWithoutSaving:
-            store.closeDocument(id)
-        case .saveThenClose:
-            store.selectDocument(id)
-            if save() {
-                store.closeDocument(id)
-            }
-        case .cancel:
-            return
-        }
+        fileCommands.closeTab(id)
     }
 
     private func closeOtherTabsWithWarning(keeping id: EditorDocument.ID) {
-        let closingDocuments = store.documents.filter { $0.id != id }
-        closeDocumentsWithWarning(closingDocuments) {
-            store.closeOtherDocuments(keeping: id)
-        }
+        fileCommands.closeOtherTabs(keeping: id)
     }
 
     private func closeTabsToRightWithWarning(of id: EditorDocument.ID) {
-        guard let index = store.documents.firstIndex(where: { $0.id == id }) else {
-            return
-        }
-
-        let closingDocuments = Array(store.documents.suffix(from: index + 1))
-        closeDocumentsWithWarning(closingDocuments) {
-            store.closeDocumentsToRight(of: id)
-        }
+        fileCommands.closeTabsToRight(of: id)
     }
 
     private func closeAllTabsWithWarning() {
-        closeDocumentsWithWarning(store.documents) {
-            store.closeAllDocuments()
-        }
-    }
-
-    private func closeDocumentsWithWarning(_ documents: [EditorDocument], close: () -> Void) {
-        switch UnsavedTabWarning.closeDecision(for: documents) {
-        case .closeWithoutSaving:
-            close()
-        case .saveThenClose:
-            guard
-                let dirtyDocument = documents.first(where: \.isDirty),
-                documents.filter(\.isDirty).count == 1
-            else {
-                return
-            }
-
-            store.selectDocument(dirtyDocument.id)
-            if save() {
-                close()
-            }
-        case .cancel:
-            return
-        }
+        fileCommands.closeAllTabs()
     }
 }
 

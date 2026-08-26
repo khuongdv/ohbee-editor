@@ -260,13 +260,19 @@ struct HighlightedTextEditor: NSViewRepresentable {
                 return
             }
 
-            let ranges = searchOptions.usesRegex
-                ? searchMatchRanges.filter { NSIntersectionRange($0, limitedRange).length > 0 }
-                : SearchReplaceEngine.matchRanges(
-                    in: textView.string,
-                    options: searchOptions,
-                    range: limitedRange
-                )
+            // Highlighting mirrors the ranges the store published for every search mode, so the
+            // match count in the search bar and the highlighted text cannot disagree, and no
+            // matching work is repeated during view updates.
+            //
+            // Published ranges describe the text the store last evaluated. A deferred highlight
+            // can therefore run against shorter text, so every range is intersected with the live
+            // text and only the surviving part is drawn. Passing an out-of-bounds range to
+            // NSTextStorage raises an exception that Swift cannot catch.
+            let ranges = searchMatchRanges.compactMap { range -> NSRange? in
+                let drawable = NSIntersectionRange(range, limitedRange)
+                guard drawable.length > 0, NSMaxRange(drawable) <= source.length else { return nil }
+                return drawable
+            }
             let maxBackgroundMatches = shouldLimitSearchHighlights ? 600 : 2_000
             for range in ranges.prefix(maxBackgroundMatches) {
                 storage.addAttribute(
@@ -286,27 +292,26 @@ struct HighlightedTextEditor: NSViewRepresentable {
             storage.endEditing()
         }
 
+        /// The emphasized match comes from the store's current match index rather than from the
+        /// editor selection, so it stays correct when the caret moves away from a match.
         private func currentVisibleSearchRange(in textView: NSTextView, visibleRange: NSRange) -> NSRange? {
-            let selectedRange = textView.selectedRange()
             guard
-                selectedRange.length > 0,
-                NSIntersectionRange(selectedRange, visibleRange).length > 0
+                let index = currentSearchMatchIndex,
+                searchMatchRanges.indices.contains(index)
             else {
                 return nil
             }
 
+            let range = searchMatchRanges[index]
             let source = textView.string as NSString
-            guard NSMaxRange(selectedRange) <= source.length else {
+            guard
+                NSMaxRange(range) <= source.length,
+                NSIntersectionRange(range, visibleRange).length > 0
+            else {
                 return nil
             }
 
-            let selectedText = source.substring(with: selectedRange)
-            return SearchReplaceEngine.matchRanges(
-                in: selectedText,
-                options: searchOptions
-            ).contains { localRange in
-                localRange.location == 0 && localRange.length == selectedRange.length
-            } ? selectedRange : nil
+            return range
         }
     }
 }

@@ -11,7 +11,7 @@ public enum RegexSearchError: Error, LocalizedError {
         case .patternTooLong:
             return "Regex pattern is too long (max 1000 characters)."
         case .patternNotSupported:
-            return "Regex uses a high-risk construct. Quantified groups, lookarounds, and pattern backreferences are not supported."
+            return "Regex uses a high-risk construct. Nested quantifiers such as (a+)+ and pattern backreferences are not supported."
         case .inputTooLarge:
             return "Regex search is limited to 300,000 UTF-16 characters."
         case .matchingTimedOut:
@@ -87,10 +87,8 @@ public enum SearchReplaceEngine {
         case inputTooLarge
         case timedOut
     }
-    public static func matchRanges(in text: String, options: SearchOptions) -> [NSRange] {
-        ranges(in: text, options: options)
-    }
-
+    /// The single entry point for search results. `EditorStore` caches what this returns and
+    /// every consumer (match count, navigation, highlighting) reads that cache.
     public static func evaluate(in text: String, options: SearchOptions, currentMatchIndex: Int?) -> SearchEvaluation {
         guard !options.query.isEmpty else {
             return SearchEvaluation(summary: SearchSummary(matchCount: 0, currentMatchIndex: nil), ranges: [])
@@ -133,102 +131,8 @@ public enum SearchReplaceEngine {
         )
     }
 
-    public static func matchRanges(in text: String, options: SearchOptions, range: NSRange) -> [NSRange] {
-        ranges(in: text, options: options, range: range)
-    }
-
-    public static func matchRange(
-        in text: String,
-        options: SearchOptions,
-        matchIndex: Int
-    ) -> NSRange? {
-        let matches = ranges(in: text, options: options)
-        guard matches.indices.contains(matchIndex) else {
-            return nil
-        }
-
-        return matches[matchIndex]
-    }
-
     public static func replacementText(forMatchedText source: String, options: SearchOptions) -> String {
         replacementText(source: source, options: options)
-    }
-
-    public static func summary(
-        in text: String,
-        options: SearchOptions,
-        currentMatchIndex: Int?
-    ) -> SearchSummary {
-        if options.usesRegex, !options.query.isEmpty {
-            let regex: NSRegularExpression
-            do {
-                regex = try regularExpression(for: options)
-            } catch {
-                return SearchSummary(
-                    matchCount: 0,
-                    currentMatchIndex: nil,
-                    hasInvalidRegex: true,
-                    errorMessage: error.localizedDescription
-                )
-            }
-            let fullRange = NSRange(location: 0, length: (text as NSString).length)
-            switch regexMatchOutcome(regex: regex, in: text, range: fullRange) {
-            case .inputTooLarge:
-                return SearchSummary(
-                    matchCount: 0,
-                    currentMatchIndex: nil,
-                    errorMessage: RegexSearchError.inputTooLarge.localizedDescription
-                )
-            case .timedOut:
-                return SearchSummary(
-                    matchCount: 0,
-                    currentMatchIndex: nil,
-                    errorMessage: RegexSearchError.matchingTimedOut.localizedDescription
-                )
-            case let .matches(matches):
-                guard !matches.isEmpty else {
-                    return SearchSummary(matchCount: 0, currentMatchIndex: nil)
-                }
-                let index = min(max(currentMatchIndex ?? 0, 0), matches.count - 1)
-                return SearchSummary(matchCount: matches.count, currentMatchIndex: index)
-            }
-        }
-
-        let matches = ranges(in: text, options: options)
-
-        guard !matches.isEmpty else {
-            return SearchSummary(matchCount: 0, currentMatchIndex: nil)
-        }
-
-        let index = min(max(currentMatchIndex ?? 0, 0), matches.count - 1)
-        return SearchSummary(matchCount: matches.count, currentMatchIndex: index)
-    }
-
-    public static func nextMatchIndex(
-        in text: String,
-        options: SearchOptions,
-        currentMatchIndex: Int?
-    ) -> Int? {
-        let count = ranges(in: text, options: options).count
-        guard count > 0 else {
-            return nil
-        }
-
-        return ((currentMatchIndex ?? -1) + 1) % count
-    }
-
-    public static func previousMatchIndex(
-        in text: String,
-        options: SearchOptions,
-        currentMatchIndex: Int?
-    ) -> Int? {
-        let count = ranges(in: text, options: options).count
-        guard count > 0 else {
-            return nil
-        }
-
-        let current = currentMatchIndex ?? 0
-        return (current - 1 + count) % count
     }
 
     public static func replaceCurrent(
@@ -426,16 +330,136 @@ public enum SearchReplaceEngine {
         return try NSRegularExpression(pattern: pattern, options: regexOptions)
     }
 
-    /// Reject constructs that can introduce unbounded backtracking. This deliberately
-    /// keeps user regexes to a predictable subset suitable for synchronous UI search.
+    /// Rejects only the constructs that actually amplify backtracking: a quantified group whose
+    /// own content is quantified (`(a+)+`) and pattern backreferences. Plain groups,
+    /// non-capturing groups, lookarounds, and single quantifiers stay usable, because the input
+    /// cap and the match deadline already bound worst-case matching time.
     private static func containsHighRiskRegexConstruct(in pattern: String) -> Bool {
-        if pattern.range(of: #"\\[1-9]"#, options: .regularExpression) != nil {
+        if pattern.range(of: #"(?<!\\)\\[1-9]"#, options: .regularExpression) != nil {
             return true
         }
-        if pattern.contains("(?") {
-            return true
+
+        return containsNestedQuantifiedGroup(in: pattern)
+    }
+
+    private static func containsNestedQuantifiedGroup(in pattern: String) -> Bool {
+        let characters = Array(pattern)
+        var groupContainsQuantifier: [Bool] = []
+        var isInCharacterClass = false
+        var index = 0
+
+        while index < characters.count {
+            let character = characters[index]
+
+            if character == "\\" {
+                index += 2
+                continue
+            }
+
+            if isInCharacterClass {
+                if character == "]" {
+                    isInCharacterClass = false
+                }
+                index += 1
+                continue
+            }
+
+            switch character {
+            case "[":
+                isInCharacterClass = true
+            case "(":
+                groupContainsQuantifier.append(false)
+                if let contentIndex = groupContentIndex(characters, openParenthesisIndex: index) {
+                    index = contentIndex
+                    continue
+                }
+            case ")":
+                let contentWasQuantified = groupContainsQuantifier.popLast() ?? false
+                let isGroupQuantified = isUnboundedQuantifier(characters, at: index + 1)
+                if contentWasQuantified, isGroupQuantified {
+                    return true
+                }
+                // An unbounded quantifier anywhere inside this group counts for the enclosing
+                // group too, so `((a+))+` is caught even though the inner group is bare.
+                if contentWasQuantified || isGroupQuantified {
+                    markQuantifier(in: &groupContainsQuantifier)
+                }
+            case "*", "+":
+                markQuantifier(in: &groupContainsQuantifier)
+            case "{":
+                if isUnboundedRepetition(characters, openBraceIndex: index) {
+                    markQuantifier(in: &groupContainsQuantifier)
+                }
+            default:
+                break
+            }
+
+            index += 1
         }
-        return pattern.range(of: #"\)(?:[*+?]|\{)"#, options: .regularExpression) != nil
+
+        return false
+    }
+
+    /// Skips group-prefix syntax such as `(?:`, `(?i)`, `(?=`, `(?!`, `(?<=`, `(?<!`, `(?<name>`
+    /// so the `?` in a prefix is never mistaken for a quantifier.
+    private static func groupContentIndex(_ characters: [Character], openParenthesisIndex: Int) -> Int? {
+        let prefixIndex = openParenthesisIndex + 1
+        guard prefixIndex < characters.count, characters[prefixIndex] == "?" else {
+            return nil
+        }
+
+        var index = prefixIndex + 1
+        while index < characters.count {
+            switch characters[index] {
+            case ":", ")":
+                return index
+            case "=", "!", ">":
+                return index + 1
+            default:
+                index += 1
+            }
+        }
+
+        return index
+    }
+
+    /// Only quantifiers without a finite upper bound can grow the match space without limit.
+    /// `{1,3}` and `{3}` are bounded, which keeps common log patterns such as
+    /// `([0-9]{1,3}\.){3}[0-9]{1,3}` usable.
+    private static func isUnboundedQuantifier(_ characters: [Character], at index: Int) -> Bool {
+        guard index < characters.count else { return false }
+        switch characters[index] {
+        case "*", "+":
+            return true
+        case "{":
+            return isUnboundedRepetition(characters, openBraceIndex: index)
+        default:
+            return false
+        }
+    }
+
+    /// `{n,}` has no upper bound. `{n}` and `{n,m}` do. A malformed brace is treated as
+    /// unbounded so the safe answer wins.
+    private static func isUnboundedRepetition(_ characters: [Character], openBraceIndex: Int) -> Bool {
+        var index = openBraceIndex + 1
+        var body = ""
+        while index < characters.count, characters[index] != "}" {
+            body.append(characters[index])
+            index += 1
+        }
+
+        guard index < characters.count else { return true }
+        guard let commaIndex = body.firstIndex(of: ",") else {
+            return body.isEmpty || Int(body) == nil
+        }
+
+        let upperBound = body[body.index(after: commaIndex)...]
+        return upperBound.isEmpty
+    }
+
+    private static func markQuantifier(in groupContainsQuantifier: inout [Bool]) {
+        guard !groupContainsQuantifier.isEmpty else { return }
+        groupContainsQuantifier[groupContainsQuantifier.count - 1] = true
     }
 
     /// Enumerates with ICU progress callbacks so pathological backtracking can be stopped
