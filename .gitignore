@@ -1,0 +1,14 @@
+# Build output
+.build/
+Ohbee Editor.app
+
+# Release artifacts are attached to releases, not tracked in the repository
+Ohbee Editor-*.zip
+OhbeeEditor-*.zip
+
+# Local tool state
+.claude/
+.DS_Store
+
+# Scratch space for unrelated open-source work
+OPENSOURCE-CONTRIBUTION/
