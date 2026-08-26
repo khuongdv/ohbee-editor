@@ -1,11 +1,11 @@
 BINARY        = OhbeeEditor
 APP           = Ohbee\ Editor.app
 BUNDLE        = $(APP)/Contents
-VERSION       = 1.1.8
+VERSION       = 1.1.9
 LSREGISTER    = /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 DEVELOPER_ID ?= "Developer ID Application: Your Name (XXXXXXXXXX)"
 
-.PHONY: build test selftest bundle run dev install install-dev clean icon codesign notarize
+.PHONY: build test selftest bundle run dev install install-dev clean icon codesign notarize check-version
 
 build:
 	swift build -c release
@@ -97,6 +97,19 @@ notarize: codesign
 	  --wait
 	xcrun stapler staple "$(APP)"
 	@echo "Notarized and stapled: $(APP)"
+
+# Version numbers live in three files. Catch drift before tagging a release.
+check-version:
+	@plist_version=$$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Support/Info.plist); \
+	readme_version=$$(grep -m1 '^Current release:' README.md | sed -E 's/.*\*\*([^*]+)\*\*.*/\1/'); \
+	echo "Makefile:   $(VERSION)"; \
+	echo "Info.plist: $$plist_version"; \
+	echo "README.md:  $$readme_version"; \
+	if [ "$(VERSION)" != "$$plist_version" ] || [ "$(VERSION)" != "$$readme_version" ]; then \
+	  echo "Version mismatch. Update Makefile, Support/Info.plist, and README.md together."; \
+	  exit 1; \
+	fi; \
+	echo "Versions agree."
 
 clean:
 	$(LSREGISTER) -u $(APP) 2>/dev/null || true

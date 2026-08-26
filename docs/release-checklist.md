@@ -6,6 +6,9 @@ Use this before tagging a release. Keep the pass focused on local-first editor t
 
 - [ ] Run `swift build`.
 - [ ] Run `swift run OhbeeEditorSelfTests`.
+- [ ] Run `make check-version` and confirm `Makefile`, `Support/Info.plist`, and `README.md` agree.
+- [ ] Confirm `CHANGELOG.md` has no unreleased entries left for this version.
+- [ ] Write `docs/release-notes/<version>.md` and confirm it matches the changelog.
 - [ ] Run `make bundle` when preparing a user-facing build.
 - [ ] Confirm `Ohbee Editor.app` launches from Finder.
 - [ ] Confirm the About window shows the intended app version.
@@ -24,6 +27,8 @@ Use this before tagging a release. Keep the pass focused on local-first editor t
 - [ ] Edit a file-backed tab without saving, quit, relaunch, and confirm unsaved text and dirty state restore.
 - [ ] Open a clean file-backed tab, quit, relaunch, and confirm the app does not treat it as dirty.
 - [ ] Confirm large-file tabs do not make relaunch noticeably slow.
+- [ ] Corrupt `session.json` on purpose, relaunch, and confirm the app warns, keeps a
+      `session.corrupt-*.json` copy, and leaves `Session Text` files in place.
 
 ## File Open and Save
 
@@ -33,7 +38,10 @@ Use this before tagging a release. Keep the pass focused on local-first editor t
 - [ ] Save edits to a file-backed tab only after explicit Save.
 - [ ] Save an unsaved note through Save As.
 - [ ] Try closing a dirty single tab and confirm Save, Close Without Saving, and Cancel behave correctly.
-- [ ] Try closing multiple dirty tabs and confirm the warning does not silently write files.
+- [ ] Try closing multiple dirty tabs and confirm the warning offers Save All, and that cancelling
+      a save leaves every tab open and unsaved.
+- [ ] Run Save All with a tab whose file access was revoked and confirm it is skipped and reported
+      rather than written.
 
 ## Search and Replace
 
@@ -50,6 +58,7 @@ Use this before tagging a release. Keep the pass focused on local-first editor t
 - [ ] Apply case conversion tools to selected text and full-document fallback.
 - [ ] Run Clean AI Output on fenced Markdown and excessive blank lines.
 - [ ] Confirm CRLF-heavy text keeps dominant line endings after line transforms.
+- [ ] Sort a file that ends with a newline and confirm no blank line appears at the top.
 - [ ] Run JSON format/minify/validate on valid and invalid JSON.
 - [ ] Run XML format/minify on valid XML and confirm invalid XML reports an error.
 - [ ] Run URL encode/decode and embedded tracking-parameter cleanup.
@@ -61,6 +70,9 @@ Use this before tagging a release. Keep the pass focused on local-first editor t
 - [ ] Select and deselect individual findings.
 - [ ] Click Copy Masked and confirm the pasteboard receives masked text while the document remains unchanged.
 - [ ] Click Apply Mask and confirm the document changes through native undo.
+- [ ] Confirm masked output keeps no prefix, suffix, or length of the original value.
+- [ ] Run Safe Share on a log containing timestamps and IP addresses and confirm they are not
+      reported as phone numbers.
 - [ ] Confirm obvious normal support text does not produce noisy false positives.
 
 ## Image Viewer
@@ -85,4 +97,8 @@ Use this before tagging a release. Keep the pass focused on local-first editor t
 - [ ] Register or launch the bundled app and confirm Finder Open With includes Ohbee Editor for text-like files.
 - [ ] Open a file via Finder Open With and confirm it appears in a tab.
 - [ ] Confirm recent files appear under File > Open Recent.
+- [ ] On a signed, sandboxed build: open a file, quit, relaunch, and confirm the tab keeps file
+      access without asking for authorization again (requires the app-scope bookmark entitlement).
+- [ ] On a signed, sandboxed build with pre-sandbox state present: confirm the old session is
+      migrated into the container on first launch.
 - [ ] Confirm no cloud, telemetry, account, remote AI, or network-dependent feature was added.

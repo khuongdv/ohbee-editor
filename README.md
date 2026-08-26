@@ -2,7 +2,7 @@
 
 A local-first text workbench for macOS. Clean, fast, no cloud, no AI writing assistant, no telemetry.
 
-Current release: **1.1.8**
+Current release: **1.1.9**
 
 > A text workbench - not a full IDE, not a note-taking app.
 
@@ -10,14 +10,14 @@ Current release: **1.1.8**
 
 ### Editing
 - **Multi-tab** — up to 50 tabs open simultaneously, mix scratch notes and file-backed documents
-- **Session restore** — scratch notes, dirty file-backed tabs, and large unsaved buffers restore locally
+- **Session restore** — scratch notes, dirty file-backed tabs, and large unsaved buffers restore locally. An unreadable session file is quarantined rather than overwritten, and local note text is kept
 - **Debounced local persistence** — session state is saved locally without writing on every keystroke, then flushed when the app closes or backgrounds
 - **Open With / drag & drop** — open files from Finder, file panels, recent files, or by dropping files onto the editor
 - **Smart indentation** — auto-indent respects language context
-- **Find & Replace** — regex support, case-sensitive and whole-word toggles, highlighted matches, and visible match navigation
+- **Find & Replace** — regex support, case-sensitive and whole-word toggles, highlighted matches, and visible match navigation. Regex mode refuses nested quantifiers such as `(a+)+` and pattern backreferences, and stops pathological matching on a deadline
 - **Large-file guardrails** — avoids expensive full-document highlighting, line-number scans, and search on large inputs
 - **Read-only files** — non-writable files open safely with a clear read-only label and one-click Save As
-- **Unsaved-change warnings** — single dirty-tab close flows can Save, Close Without Saving, or Cancel
+- **Unsaved-change warnings** — closing one dirty tab offers Save, Close Without Saving, or Cancel; closing several offers Save All, and a cancelled save aborts the close
 - **Reopen Closed File** — reopen up to 10 recently closed file-backed tabs with `⌘⇧T`
 - **Save All** — save all dirty file-backed tabs at once with `⌘⌥S`
 
@@ -68,7 +68,7 @@ Before pasting content somewhere else, run a scan:
 - **Review Safe Share** — shows a local review sheet with categorized findings and a masked preview
 - **Selective masking** — choose individual findings to include or exclude from the masked output
 - **Copy Masked** — copies the redacted preview without changing the document
-- **Apply Mask** — replaces sensitive values with `abcd***xyz` redactions in-place and remains undoable
+- **Apply Mask** — replaces sensitive values with a fixed `***REDACTED***` placeholder in-place and remains undoable; no prefix, suffix, or length of the original value is kept
 - **Detect Sensitive Text** — quick status-only scan for likely bearer tokens, JWTs, emails, phone numbers, `.env` secrets, API keys
 - **Copy Findings Summary** — copy category counts without copying the sensitive values themselves
 
@@ -104,6 +104,7 @@ HTTPS clone URL: `https://github.com/ohbee-labs/ohbee-editor.git`
 | `make run` | Build release bundle and open it |
 | `make install` | Sign with App Sandbox entitlements, deploy to `/Applications`, and register file types |
 | `make install-dev` | Install an explicitly unsigned/unsandboxed local development bundle |
+| `make check-version` | Verify `Makefile`, `Support/Info.plist`, and `README.md` agree on the version |
 | `make clean` | Remove build artifacts and unregister the local bundle |
 
 ## File Type Support
